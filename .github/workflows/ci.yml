@@ -68,8 +68,24 @@ jobs:
       - name: Prisma schema validate
         run: pnpm --filter @kinvo/api run prisma:validate
 
+      - name: Dependency vulnerability audit
+        run: pnpm audit --audit-level=high
+
       - name: Test
         run: pnpm run test
 
       - name: Build
         run: pnpm run build
+
+  secret-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
