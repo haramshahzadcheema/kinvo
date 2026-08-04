@@ -1,0 +1,38 @@
+{
+  "name": "kinvo",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@10.34.3",
+  "scripts": {
+    "build:contracts": "pnpm --filter @kinvo/contracts run build",
+    "build": "pnpm run build:contracts && pnpm --filter @kinvo/api --filter @kinvo/web run build",
+    "dev:api": "pnpm --filter @kinvo/api run dev",
+    "dev:web": "pnpm --filter @kinvo/web run dev",
+    "lint": "pnpm -r --if-present run lint",
+    "typecheck": "pnpm run build:contracts && pnpm -r --if-present run typecheck",
+    "test": "pnpm run build:contracts && pnpm -r --if-present run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@types/node": "^20.16.11",
+    "eslint": "^9.13.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.11.0",
+    "vitest": "^2.1.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "prisma"
+    ]
+  }
+}

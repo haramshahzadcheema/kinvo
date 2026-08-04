@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+coverage/
+
+# Env
+.env
+.env.*.local
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local Claude Code session state (not shared project config)
+.claude/settings.local.json
+
+# Vite
+.vite/
+
+# Prisma
+apps/api/prisma/dev.db
+
+# Testing
+*.tsbuildinfo

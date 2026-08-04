@@ -1,0 +1,13 @@
+node_modules
+dist
+build
+coverage
+pnpm-lock.yaml
+apps/api/prisma/migrations
+.turbo
+
+# Pre-existing design-tool export, not engineering source.
+Kinvo.dc.html
+image-slot.js
+support.js
+uploads/

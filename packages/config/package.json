@@ -1,0 +1,9 @@
+{
+  "name": "@kinvo/config",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Shared TypeScript compiler configuration for Kinvo workspaces.",
+  "files": [
+    "tsconfig.base.json"
+  ]
+}
