@@ -29,8 +29,5 @@ Thumbs.db
 # Vite
 .vite/
 
-# Prisma
-apps/api/prisma/dev.db
-
 # Testing
 *.tsbuildinfo

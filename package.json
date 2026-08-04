@@ -8,7 +8,7 @@
   "packageManager": "pnpm@10.34.3",
   "scripts": {
     "build:contracts": "pnpm --filter @kinvo/contracts run build",
-    "build": "pnpm run build:contracts && pnpm --filter @kinvo/api --filter @kinvo/web run build",
+    "build": "pnpm -r --if-present run build",
     "dev:api": "pnpm --filter @kinvo/api run dev",
     "dev:web": "pnpm --filter @kinvo/web run dev",
     "lint": "pnpm -r --if-present run lint",
