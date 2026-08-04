@@ -18,6 +18,8 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS dev
 COPY . .
 EXPOSE 4000
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+  CMD wget --quiet --spider http://localhost:4000/health/live || exit 1
 # The docker-compose bind mount overlays anything built at image-construction
 # time, so @kinvo/contracts is (re)built on every container start rather than
 # baked into the image — this also means editing packages/contracts/src and
@@ -46,4 +48,6 @@ WORKDIR /workspace
 ENV NODE_ENV=production
 COPY --from=build /workspace ./
 EXPOSE 4000
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --quiet --spider http://localhost:4000/health/live || exit 1
 CMD ["node", "apps/api/dist/server.js"]

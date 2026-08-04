@@ -19,6 +19,8 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 EXPOSE 5173
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+  CMD wget --quiet --spider http://localhost:5173/ || exit 1
 # @kinvo/web does a real runtime import from @kinvo/contracts (not type-only),
 # so it needs the compiled dist/ present. Built on every container start,
 # not baked into the image, because the compose bind mount would hide it.
