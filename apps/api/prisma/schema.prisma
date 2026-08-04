@@ -1,0 +1,12 @@
+// Phase 0: connection + tooling only. No models yet.
+// Organization, User, and RefreshToken land in Phase 1, at which point
+// `prisma migrate dev` produces the first real migration.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
