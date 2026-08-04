@@ -4,12 +4,13 @@ import express, { type Express } from 'express';
 import helmet from 'helmet';
 import pinoHttp from 'pino-http';
 import { env } from './config/env';
+import type { Container } from './core/container';
 import { errorHandler } from './core/middleware/errorHandler';
 import { notFoundHandler } from './core/middleware/notFound';
 import { logger } from './core/logger';
-import { healthRouter } from './modules/health/health.routes';
+import { createHealthRouter } from './modules/health/health.routes';
 
-export function createApp(): Express {
+export function createApp(container: Container): Express {
   const app = express();
 
   app.disable('x-powered-by');
@@ -36,7 +37,7 @@ export function createApp(): Express {
     }),
   );
 
-  app.use('/health', healthRouter);
+  app.use('/health', createHealthRouter(container.healthService));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

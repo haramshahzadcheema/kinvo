@@ -1,10 +1,12 @@
 import { createApp } from './app';
 import { env } from './config/env';
+import { createContainer } from './core/container';
 import { pool } from './core/database';
 import { logger } from './core/logger';
 import { redis } from './core/redis';
 
-const app = createApp();
+const container = createContainer();
+const app = createApp(container);
 
 const server = app.listen(env.PORT, () => {
   logger.info(`Kinvo API listening on port ${env.PORT} (${env.NODE_ENV})`);

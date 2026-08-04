@@ -19,6 +19,7 @@
     "@kinvo/contracts": "workspace:*",
     "cors": "^2.8.5",
     "express": "^4.21.0",
+    "express-rate-limit": "^7.4.1",
     "helmet": "^7.1.0",
     "ioredis": "^5.4.1",
     "pg": "^8.13.0",
