@@ -241,6 +241,22 @@ scope a query fails closed rather than leaking cross-tenant data. This is
 the single highest-value security control in a multi-tenant app — treat it
 as non-negotiable, not a nice-to-have.
 
+**Status (2026-08-04, Phase 0 audit finding C3):** the AsyncLocalStorage
+primitive this depends on already exists —
+`apps/api/src/core/tenant-context.ts` (`runWithTenantContext` /
+`getTenantContext`), with tests proving the guarantee that actually
+matters: concurrent requests for different organizations never leak
+context into each other. It is **not yet wired to anything** — there's no
+auth middleware to populate it from a JWT, and no Prisma `$use` middleware
+to consume it, because neither can exist before Phase 1's first models
+land. Phase 1's first commit must wire both: the auth middleware calling
+`runWithTenantContext` per request, and the Prisma middleware calling
+`getTenantContext` on every query — with an integration test that proves a
+query scoped to Organization A cannot return Organization B's rows even if
+a developer forgets a `where: { organizationId }` clause by hand. Building
+the tenant-scoping middleware without that test does not satisfy this
+requirement.
+
 ---
 
 ## 5. API Design
@@ -379,6 +395,18 @@ independently:
   online — out of scope for MVP but the event-bus shape supports adding it
   without touching producers.
 
+**Non-negotiable the moment there is more than one API instance**: Socket.io
+requires the `@socket.io/redis-adapter` to broadcast across pods. Without
+it, a client connected to pod A never receives an event triggered by a
+webhook that landed on pod B — the broadcast silently stays local to
+whichever instance handled it. This fails quietly, not loudly: no error,
+just a manager who doesn't see an escalation. Since framing decision #2
+calls real-time "mandatory," treat wiring the Redis adapter as part of
+_making Socket.io horizontally scalable_, not as an optional hardening
+step — it must land before Phase 5 (Yellow Zone) ever runs on more than a
+single instance. (Flagged in the Phase 0 audit, `docs/PHASE_0_AUDIT.md`
+finding H2.)
+
 ## 12. Logging
 
 Structured JSON logs via `pino`, one line per event, request-correlated via
@@ -416,6 +444,14 @@ Redis + BullMQ. Queues:
 - `notifications-fanout` — persists + broadcasts events from the internal
   bus (kept as a queue rather than fire-and-forget so a Socket.io hiccup
   doesn't lose a notification).
+
+**BullMQ needs its own Redis connection, not the Phase 0 health-check/cache
+one.** `apps/api/src/core/redis.ts`'s singleton is configured with
+`maxRetriesPerRequest: 1`; BullMQ requires `maxRetriesPerRequest: null` on
+any connection it uses for blocking commands and throws at startup
+otherwise. Create a separate `ioredis` connection for queues/workers when
+Phase 4 lands — don't reuse the existing singleton. (Flagged in the Phase 0
+audit, `docs/PHASE_0_AUDIT.md` finding H3.)
 
 Workers run as a separate process/container from the API from day one, even
 in Phase 1 scaffolding — trivial to do early, expensive to retrofit once code
