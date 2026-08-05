@@ -7,6 +7,13 @@ import { getRequestContext } from '../../core/request-context';
 
 const INVITATION_TTL_DAYS = 7;
 
+// Prisma Client Extensions change the shape of the transaction-callback
+// client just enough that the base `Prisma.TransactionClient` type doesn't
+// structurally match it — deriving the type from the actual extended
+// client (rather than importing the generic one) is what keeps this
+// correct instead of fighting the type checker with a cast.
+type TransactionClient = Parameters<Parameters<typeof prismaClient.$transaction>[0]>[0];
+
 export interface OrganizationsServiceDependencies {
   prisma: typeof prismaClient;
   generateInvitationTokenValue: () => string;
@@ -41,18 +48,32 @@ export function createOrganizationsService({
   hashInvitationTokenValue,
   auditLogger,
 }: OrganizationsServiceDependencies): OrganizationsService {
-  async function findActiveMembership(membershipId: string) {
-    return prisma.membership.findFirst({ where: { id: membershipId, status: 'ACTIVE' } });
-  }
-
-  async function assertNotLastOwner(membershipId: string, currentRole: RoleValue): Promise<void> {
+  // Takes a row-level lock on every active-owner membership in this
+  // organization before counting them, for the life of the enclosing
+  // transaction. Fixes a real, confirmed-under-load race: the previous
+  // version's count() and the eventual update() were separate, unlocked
+  // statements, so two concurrent requests demoting/removing two DIFFERENT
+  // owners of the same org could each read "2 owners, safe" before either
+  // committed — reproduced live 5 times in a row, each leaving the
+  // organization with zero active owners. `FOR UPDATE` isn't reachable
+  // through Prisma's query builder, so this is raw SQL, manually scoped by
+  // organizationId in the query itself (the tenant-scoping extension only
+  // intercepts model operations, not $queryRaw — see core/prisma.ts).
+  async function assertNotLastOwnerLocked(
+    tx: TransactionClient,
+    organizationId: string,
+    membershipId: string,
+    currentRole: RoleValue,
+  ): Promise<void> {
     if (currentRole !== 'OWNER') {
       return;
     }
-    const ownerCount = await prisma.membership.count({
-      where: { role: 'OWNER', status: 'ACTIVE' },
-    });
-    if (ownerCount <= 1) {
+    const owners = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM memberships
+      WHERE "organizationId" = ${organizationId} AND role = 'OWNER' AND status = 'ACTIVE'
+      FOR UPDATE
+    `;
+    if (owners.length <= 1) {
       throw new ConflictError("Cannot remove or demote the organization's last remaining owner.", {
         membershipId,
       });
@@ -81,19 +102,25 @@ export function createOrganizationsService({
   async function updateMemberRole(membershipId: string, role: RoleValue): Promise<Member> {
     const context = getRequestContext();
 
-    const target = await findActiveMembership(membershipId);
-    if (!target) {
-      throw new NotFoundError('Membership not found.');
-    }
+    const { previousRole, updated } = await prisma.$transaction(async (tx) => {
+      const target = await tx.membership.findFirst({
+        where: { id: membershipId, status: 'ACTIVE' },
+      });
+      if (!target) {
+        throw new NotFoundError('Membership not found.');
+      }
 
-    if (target.role !== role) {
-      await assertNotLastOwner(membershipId, target.role);
-    }
+      if (target.role !== role) {
+        await assertNotLastOwnerLocked(tx, context.organizationId, membershipId, target.role);
+      }
 
-    const updated = await prisma.membership.update({
-      where: { id: membershipId },
-      data: { role },
-      include: { user: true },
+      const updated = await tx.membership.update({
+        where: { id: membershipId },
+        data: { role },
+        include: { user: true },
+      });
+
+      return { previousRole: target.role, updated };
     });
 
     auditLogger.record({
@@ -101,7 +128,7 @@ export function createOrganizationsService({
       actorUserId: context.userId,
       organizationId: context.organizationId,
       targetId: membershipId,
-      metadata: { previousRole: target.role, newRole: role },
+      metadata: { previousRole, newRole: role },
     });
 
     return {
@@ -119,14 +146,18 @@ export function createOrganizationsService({
   async function removeMember(membershipId: string): Promise<void> {
     const context = getRequestContext();
 
-    const target = await findActiveMembership(membershipId);
-    if (!target) {
-      throw new NotFoundError('Membership not found.');
-    }
+    await prisma.$transaction(async (tx) => {
+      const target = await tx.membership.findFirst({
+        where: { id: membershipId, status: 'ACTIVE' },
+      });
+      if (!target) {
+        throw new NotFoundError('Membership not found.');
+      }
 
-    await assertNotLastOwner(membershipId, target.role);
+      await assertNotLastOwnerLocked(tx, context.organizationId, membershipId, target.role);
 
-    await prisma.membership.update({ where: { id: membershipId }, data: { status: 'REMOVED' } });
+      await tx.membership.update({ where: { id: membershipId }, data: { status: 'REMOVED' } });
+    });
 
     auditLogger.record({
       type: 'membership.removed',

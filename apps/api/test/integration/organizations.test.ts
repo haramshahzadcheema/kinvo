@@ -66,12 +66,14 @@ describe('invitation flow', () => {
     const CONCURRENCY = 10;
     const responses = await Promise.all(
       Array.from({ length: CONCURRENCY }, (_, i) =>
-        request(app).post('/api/v1/auth/accept-invitation').send({
-          token: inviteToken,
-          password: 'a-perfectly-good-password',
-          firstName: 'Racer',
-          lastName: `${i}`,
-        }),
+        request(app)
+          .post('/api/v1/auth/accept-invitation')
+          .send({
+            token: inviteToken,
+            password: 'a-perfectly-good-password',
+            firstName: 'Racer',
+            lastName: `${i}`,
+          }),
       ),
     );
 
@@ -261,6 +263,59 @@ describe('member management', () => {
       (client) => client.membership.findUniqueOrThrow({ where: { id: secondOwnerMembershipId } }),
     );
     expect(membership.role).toBe('OWNER');
+  });
+
+  it('never lets a concurrent double-demote take an organization to zero owners', async () => {
+    // Regression test for the most severe bug found in this project's
+    // chaos-testing pass: assertNotLastOwner's count() and the eventual
+    // update() were separate, unlocked statements. Two concurrent requests
+    // demoting two DIFFERENT owners of the same org could each read "2
+    // owners, safe" before either committed. Reproduced live 5 times in a
+    // row against the running Docker stack — every trial organization ended
+    // with zero active owners. The fix takes a row-level lock (`FOR UPDATE`)
+    // on every active-owner membership before counting them, so the second
+    // concurrent request blocks until the first commits and then correctly
+    // sees only one owner left.
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+
+    const invite = await request(app)
+      .post('/api/v1/organizations/invitations')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ email: 'second-owner-race@example.com', role: 'OWNER' });
+    const accept = await request(app).post('/api/v1/auth/accept-invitation').send({
+      token: invite.body.inviteToken,
+      password: 'a-perfectly-good-password',
+      firstName: 'Second',
+      lastName: 'Owner',
+    });
+    const secondOwnerMembershipId = accept.body.membership.id as string;
+    const secondOwnerAccessToken = accept.body.accessToken as string;
+
+    const [demoteFirst, demoteSecond] = await Promise.all([
+      request(app)
+        .patch(`/api/v1/organizations/members/${owner.membershipId}`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ role: 'ADMIN' }),
+      request(app)
+        .patch(`/api/v1/organizations/members/${secondOwnerMembershipId}`)
+        .set('Authorization', `Bearer ${secondOwnerAccessToken}`)
+        .send({ role: 'ADMIN' }),
+    ]);
+
+    const succeeded = [demoteFirst, demoteSecond].filter((r) => r.status === 200);
+    const rejected = [demoteFirst, demoteSecond].filter((r) => r.status === 409);
+    expect(succeeded).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+
+    const activeOwners = await withoutTenantScope(
+      'Test assertion verifying the organization never reaches zero active owners — no request context exists in test code.',
+      (client) =>
+        client.membership.count({
+          where: { organizationId: owner.organizationId, role: 'OWNER', status: 'ACTIVE' },
+        }),
+    );
+    expect(activeOwners).toBe(1);
   });
 
   it('removes a non-owner member', async () => {
