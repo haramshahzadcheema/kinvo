@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express, { type Express } from 'express';
 import helmet from 'helmet';
@@ -8,7 +9,9 @@ import type { Container } from './core/container';
 import { errorHandler } from './core/middleware/errorHandler';
 import { notFoundHandler } from './core/middleware/notFound';
 import { logger } from './core/logger';
+import { createAuthRouter } from './modules/auth/auth.routes';
 import { createHealthRouter } from './modules/health/health.routes';
+import { createOrganizationsRouter } from './modules/organizations/organizations.routes';
 
 export function createApp(container: Container): Express {
   const app = express();
@@ -22,6 +25,7 @@ export function createApp(container: Container): Express {
     }),
   );
   app.use(express.json());
+  app.use(cookieParser());
   app.use(
     pinoHttp({
       logger,
@@ -38,6 +42,8 @@ export function createApp(container: Container): Express {
   );
 
   app.use('/health', createHealthRouter(container.healthService));
+  app.use('/api/v1/auth', createAuthRouter(container.authService));
+  app.use('/api/v1/organizations', createOrganizationsRouter(container.organizationsService));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

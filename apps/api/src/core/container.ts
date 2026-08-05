@@ -1,20 +1,41 @@
+import { randomUUID } from 'node:crypto';
+import { createAuthService, type AuthService } from '../modules/auth/auth.service';
 import { createHealthService, type HealthService } from '../modules/health/health.service';
-import { checkDatabaseConnection } from './database';
+import {
+  createOrganizationsService,
+  type OrganizationsService,
+} from '../modules/organizations/organizations.service';
+import { createAuditLogger, type AuditLogger } from './audit/audit-logger';
+import { logger } from './logger';
+import { checkDatabaseConnection, prisma } from './prisma';
 import { checkRedisConnection } from './redis';
+import { hashPassword, verifyPassword } from './security/password';
+import {
+  generateInvitationTokenValue,
+  generateRefreshTokenValue,
+  hashInvitationTokenValue,
+  hashRefreshTokenValue,
+  refreshTokenExpiryDate,
+  signAccessToken,
+} from './security/tokens';
 
 /**
  * The composition root: the one place concrete implementations get wired
- * into the services that depend on them. Adding a new service (Phase 1's
- * authService, Phase 4's CALL-E-backed campaignService) means constructing
- * it here and adding it to Container — services themselves should receive
- * their dependencies as constructor/factory arguments, not import
- * singletons directly. That's what makes swapping a real dependency for a
- * fake one (e.g. `FakeVoiceProvider` in tests or a resilient demo) a
- * one-line change here, instead of a module-mocking exercise at every call
- * site that uses it.
+ * into the services that depend on them. Adding a new service (Phase 4's
+ * CALL-E-backed campaignService, etc.) means constructing it here and
+ * adding it to Container — services themselves receive their dependencies
+ * as factory arguments, not import singletons directly. That's what makes
+ * swapping a real dependency for a fake one (e.g. `FakeVoiceProvider` in
+ * tests or a resilient demo) a one-line change here, instead of a
+ * module-mocking exercise at every call site that uses it — see
+ * auth.service.ts / organizations.service.ts / their tests for the pattern
+ * this was designed for.
  */
 export interface Container {
   healthService: HealthService;
+  authService: AuthService;
+  organizationsService: OrganizationsService;
+  auditLogger: AuditLogger;
 }
 
 export function createContainer(): Container {
@@ -23,5 +44,27 @@ export function createContainer(): Container {
     checkRedisConnection,
   });
 
-  return { healthService };
+  const auditLogger = createAuditLogger(logger);
+
+  const authService = createAuthService({
+    prisma,
+    hashPassword,
+    verifyPassword,
+    signAccessToken,
+    generateRefreshTokenValue,
+    hashRefreshTokenValue,
+    refreshTokenExpiryDate,
+    hashInvitationTokenValue,
+    generateFamilyId: randomUUID,
+    auditLogger,
+  });
+
+  const organizationsService = createOrganizationsService({
+    prisma,
+    generateInvitationTokenValue,
+    hashInvitationTokenValue,
+    auditLogger,
+  });
+
+  return { healthService, authService, organizationsService, auditLogger };
 }

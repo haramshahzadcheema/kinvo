@@ -1,8 +1,8 @@
 import { createApp } from './app';
 import { env } from './config/env';
 import { createContainer } from './core/container';
-import { pool } from './core/database';
 import { logger } from './core/logger';
+import { disconnectPrisma } from './core/prisma';
 import { redis } from './core/redis';
 
 const container = createContainer();
@@ -15,7 +15,7 @@ const server = app.listen(env.PORT, () => {
 function shutdown(signal: string): void {
   logger.info(`Received ${signal}, shutting down gracefully.`);
   server.close(() => {
-    void pool.end().finally(() => {
+    void disconnectPrisma().finally(() => {
       redis.disconnect();
       process.exit(0);
     });
