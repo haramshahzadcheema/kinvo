@@ -15,3 +15,46 @@ export type {
   LivenessResponse,
   ReadinessResponse,
 } from './health.schema';
+
+export { roleSchema, membershipStatusSchema } from './membership.schema';
+export type { RoleValue, MembershipStatusValue } from './membership.schema';
+
+export {
+  registerOrganizationRequestSchema,
+  loginRequestSchema,
+  acceptInvitationRequestSchema,
+  currentUserSchema,
+  currentOrganizationSchema,
+  currentMembershipSchema,
+  authResponseSchema,
+  meResponseSchema,
+} from './auth.schema';
+export type {
+  RegisterOrganizationRequest,
+  LoginRequest,
+  AcceptInvitationRequest,
+  CurrentUser,
+  CurrentOrganization,
+  CurrentMembership,
+  AuthResponse,
+  MeResponse,
+} from './auth.schema';
+
+export {
+  memberSchema,
+  listMembersResponseSchema,
+  updateMemberRoleRequestSchema,
+  createInvitationRequestSchema,
+  invitationStatusSchema,
+  invitationSchema,
+  listInvitationsResponseSchema,
+} from './organization.schema';
+export type {
+  Member,
+  ListMembersResponse,
+  UpdateMemberRoleRequest,
+  CreateInvitationRequest,
+  InvitationStatusValue,
+  InvitationDto,
+  ListInvitationsResponse,
+} from './organization.schema';
