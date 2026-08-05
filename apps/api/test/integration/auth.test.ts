@@ -50,6 +50,32 @@ describe('POST /api/v1/auth/register-organization', () => {
     expect(response.status).toBe(409);
   });
 
+  it('under concurrent registrations with the same email, exactly one succeeds and no request 500s', async () => {
+    // Regression test for a bug found via chaos testing: the same
+    // check-then-create gap as acceptInvitation, in registerOrganization.
+    // The up-front existingUser check is a courtesy, not a guarantee — 8
+    // concurrent registrations with the same email all pass it before any
+    // commits. Confirmed live: 7 of 8 raised uncaught P2002 errors that
+    // surfaced as raw 500s instead of a clean conflict response.
+    const app = buildApp();
+    const email = `${Date.now()}-concurrent@example.com`;
+
+    const CONCURRENCY = 8;
+    const responses = await Promise.all(
+      Array.from({ length: CONCURRENCY }, (_, i) =>
+        request(app)
+          .post('/api/v1/auth/register-organization')
+          .send(registrationPayload({ email, organizationName: `Concurrent Reg Org ${i}` })),
+      ),
+    );
+
+    const successes = responses.filter((r) => r.status === 201);
+    const serverErrors = responses.filter((r) => r.status >= 500);
+    expect(successes).toHaveLength(1);
+    expect(serverErrors).toHaveLength(0);
+    expect(responses.filter((r) => r.status !== 201).every((r) => r.status === 409)).toBe(true);
+  });
+
   it('rejects an invalid payload with a 400 before touching the database', async () => {
     const app = buildApp();
     const response = await request(app).post('/api/v1/auth/register-organization').send({

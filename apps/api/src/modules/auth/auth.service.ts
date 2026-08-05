@@ -5,7 +5,7 @@ import type {
   MeResponse,
   RegisterOrganizationRequest,
 } from '@kinvo/contracts';
-import type { Membership, Organization, User } from '@prisma/client';
+import { Prisma, type Membership, type Organization, type User } from '@prisma/client';
 import type { AuditLogger } from '../../core/audit/audit-logger';
 import { ConflictError, UnauthorizedError } from '../../core/errors/AppError';
 import type { prisma as prismaClient } from '../../core/prisma';
@@ -157,27 +157,52 @@ export function createAuthService({
       generateUniqueSlug(input.organizationName),
     ]);
 
-    const { user, organization, membership } = await withoutTenantScope(
-      'Creating a brand-new organization + owner user + first membership during registration — no tenant context exists yet because the organization is being created in this same call.',
-      (client) =>
-        client.$transaction(async (tx) => {
-          const organization = await tx.organization.create({
-            data: { name: input.organizationName, slug },
-          });
-          const user = await tx.user.create({
-            data: {
-              email: input.email,
-              passwordHash,
-              firstName: input.firstName,
-              lastName: input.lastName,
-            },
-          });
-          const membership = await tx.membership.create({
-            data: { userId: user.id, organizationId: organization.id, role: 'OWNER' },
-          });
-          return { user, organization, membership };
-        }),
-    );
+    let created: { user: User; organization: Organization; membership: Membership };
+    try {
+      created = await withoutTenantScope(
+        'Creating a brand-new organization + owner user + first membership during registration — no tenant context exists yet because the organization is being created in this same call.',
+        (client) =>
+          client.$transaction(async (tx) => {
+            const organization = await tx.organization.create({
+              data: { name: input.organizationName, slug },
+            });
+            const user = await tx.user.create({
+              data: {
+                email: input.email,
+                passwordHash,
+                firstName: input.firstName,
+                lastName: input.lastName,
+              },
+            });
+            const membership = await tx.membership.create({
+              data: { userId: user.id, organizationId: organization.id, role: 'OWNER' },
+            });
+            return { user, organization, membership };
+          }),
+      );
+    } catch (error) {
+      // Same class of bug as acceptInvitation below: the up-front
+      // existingUser check is a courtesy, not a guarantee, and
+      // generateUniqueSlug's check-then-create loop has the same gap for
+      // slug — confirmed under concurrency: 7 of 8 simultaneous
+      // registrations with the same email raised uncaught P2002 (unique
+      // constraint) errors that surfaced as raw 500s instead of a clean
+      // conflict response.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const target = Array.isArray(error.meta?.target) ? error.meta.target.join(',') : '';
+        if (target.includes('email')) {
+          throw new ConflictError('An account with this email already exists.');
+        }
+        if (target.includes('slug')) {
+          throw new ConflictError(
+            'This organization name is temporarily unavailable — please try again.',
+          );
+        }
+        throw new ConflictError('This request conflicts with existing data.');
+      }
+      throw error;
+    }
+    const { user, organization, membership } = created;
 
     auditLogger.record({
       type: 'auth.register_organization',
@@ -372,35 +397,53 @@ export function createAuthService({
 
     const passwordHash = await hashPassword(input.password);
 
-    const { user, organization, membership } = await withoutTenantScope(
-      'Creating the invited user + their first membership + marking the invitation accepted, in one transaction — no tenant context exists yet for this brand-new membership.',
-      (client) =>
-        client.$transaction(async (tx) => {
-          const user = await tx.user.create({
-            data: {
-              email: invitation.email,
-              passwordHash,
-              firstName: input.firstName,
-              lastName: input.lastName,
-            },
-          });
-          const membership = await tx.membership.create({
-            data: {
-              userId: user.id,
-              organizationId: invitation.organizationId,
-              role: invitation.role,
-            },
-          });
-          await tx.invitation.update({
-            where: { id: invitation.id },
-            data: { status: 'ACCEPTED', acceptedAt: new Date() },
-          });
-          const organization = await tx.organization.findUniqueOrThrow({
-            where: { id: invitation.organizationId },
-          });
-          return { user, organization, membership };
-        }),
-    );
+    let created: { user: User; organization: Organization; membership: Membership };
+    try {
+      created = await withoutTenantScope(
+        'Creating the invited user + their first membership + marking the invitation accepted, in one transaction — no tenant context exists yet for this brand-new membership.',
+        (client) =>
+          client.$transaction(async (tx) => {
+            const user = await tx.user.create({
+              data: {
+                email: invitation.email,
+                passwordHash,
+                firstName: input.firstName,
+                lastName: input.lastName,
+              },
+            });
+            const membership = await tx.membership.create({
+              data: {
+                userId: user.id,
+                organizationId: invitation.organizationId,
+                role: invitation.role,
+              },
+            });
+            await tx.invitation.update({
+              where: { id: invitation.id },
+              data: { status: 'ACCEPTED', acceptedAt: new Date() },
+            });
+            const organization = await tx.organization.findUniqueOrThrow({
+              where: { id: invitation.organizationId },
+            });
+            return { user, organization, membership };
+          }),
+      );
+    } catch (error) {
+      // The up-front existingUser check above is a courtesy, not a
+      // guarantee — two concurrent accept-invitation requests for the same
+      // invitation both pass it before either commits. Confirmed under
+      // concurrency: the losing request's tx.user.create hits User.email's
+      // unique constraint and Prisma throws P2002, which — uncaught —
+      // surfaced as a raw 500 instead of the same clean conflict response
+      // the up-front check already gives a non-concurrent duplicate.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictError(
+          'An account with this email already exists. Joining a second organization is not yet supported.',
+        );
+      }
+      throw error;
+    }
+    const { user, organization, membership } = created;
 
     auditLogger.record({
       type: 'invitation.accepted',

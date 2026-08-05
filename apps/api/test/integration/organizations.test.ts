@@ -42,6 +42,51 @@ describe('invitation flow', () => {
     expect(invitation.status).toBe('ACCEPTED');
   });
 
+  it('under concurrent accept requests for the same invitation, exactly one succeeds and no request 500s', async () => {
+    // Regression test for a bug found via chaos testing: acceptInvitation's
+    // up-front existingUser check is a courtesy, not a guarantee — 20
+    // concurrent accept requests for the same invitation token all pass it
+    // before any of them commits. Confirmed empirically: the losing
+    // requests' tx.user.create hit User.email's unique constraint and the
+    // resulting Prisma P2002 error, uncaught, surfaced as a raw 500 instead
+    // of a clean conflict response (data integrity was never at risk — the
+    // unique constraint did its job — but the HTTP-level failure mode was
+    // wrong). The fix catches P2002 around that transaction and translates
+    // it to the same ConflictError the non-concurrent duplicate path
+    // already returns.
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+
+    const createResponse = await request(app)
+      .post('/api/v1/organizations/invitations')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ email: 'race-invitee@example.com', role: 'DISPATCHER' });
+    const inviteToken = createResponse.body.inviteToken as string;
+
+    const CONCURRENCY = 10;
+    const responses = await Promise.all(
+      Array.from({ length: CONCURRENCY }, (_, i) =>
+        request(app).post('/api/v1/auth/accept-invitation').send({
+          token: inviteToken,
+          password: 'a-perfectly-good-password',
+          firstName: 'Racer',
+          lastName: `${i}`,
+        }),
+      ),
+    );
+
+    const successes = responses.filter((r) => r.status === 201);
+    const serverErrors = responses.filter((r) => r.status >= 500);
+    expect(successes).toHaveLength(1);
+    expect(serverErrors).toHaveLength(0);
+
+    const userCount = await withoutTenantScope(
+      'Test assertion verifying no duplicate user was created under the race — no request context exists in test code.',
+      (client) => client.user.count({ where: { email: 'race-invitee@example.com' } }),
+    );
+    expect(userCount).toBe(1);
+  });
+
   it('rejects accepting an invitation twice', async () => {
     const app = buildApp();
     const owner = await registerOrganization(app);
