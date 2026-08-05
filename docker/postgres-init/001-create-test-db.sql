@@ -1,0 +1,11 @@
+-- Runs once, automatically, the first time the postgres container starts
+-- against an empty data volume (standard Postgres image behavior for
+-- anything mounted into /docker-entrypoint-initdb.d/). Creates a second,
+-- separate database for integration tests to TRUNCATE/reset freely without
+-- ever touching the dev database's data.
+--
+-- Hardcoded to "kinvo_test", not derived from $POSTGRES_DB — this must
+-- match the DATABASE_URL integration tests use (apps/api/vitest.config.ts)
+-- and what CI's Postgres service container provisions directly, so local
+-- dev and CI agree on one name regardless of what POSTGRES_DB is set to.
+CREATE DATABASE kinvo_test;

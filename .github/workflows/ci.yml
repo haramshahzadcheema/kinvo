@@ -40,6 +40,10 @@ jobs:
       REDIS_URL: redis://localhost:6379
       CORS_ORIGIN: http://localhost:5173
       LOG_LEVEL: silent
+      JWT_ACCESS_SECRET: ci-only-access-token-secret-at-least-32-chars-long
+      JWT_ACCESS_TTL: 15m
+      REFRESH_TOKEN_TTL_DAYS: 30
+      REFRESH_TOKEN_COOKIE_NAME: kinvo_refresh_token
 
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +71,9 @@ jobs:
 
       - name: Prisma schema validate
         run: pnpm --filter @kinvo/api run prisma:validate
+
+      - name: Prisma migrate deploy (test database)
+        run: pnpm --filter @kinvo/api run prisma:migrate:deploy
 
       - name: Dependency vulnerability audit
         run: pnpm audit --audit-level=high

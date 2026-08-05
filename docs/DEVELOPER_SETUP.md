@@ -41,6 +41,13 @@ When running via Docker Compose, `docker-compose.yml` injects the correct
 in-network values (`postgres`, `redis` as hostnames) directly — you do not
 need `apps/api/.env` for the Docker path, only for native dev.
 
+`apps/api/.env.example` also carries the auth/token config added in Phase 1:
+`JWT_ACCESS_SECRET` (min 32 chars — the app refuses to boot without one),
+`JWT_ACCESS_TTL`, `REFRESH_TOKEN_TTL_DAYS`, `REFRESH_TOKEN_COOKIE_NAME`. The
+checked-in example values are dev-only placeholders (`docker-compose.yml`
+sets the same dev-only literal for the Docker path) — generate real random
+secrets per environment for anything beyond a local machine.
+
 ## 3. First-time setup
 
 ### Option A — Docker (recommended)
@@ -60,7 +67,9 @@ Wait for all four services to report healthy/ready in the logs, then:
 - Redis: `localhost:6379`
 
 That's it — Postgres, Redis, the API (hot-reload via `tsx watch`), and the
-web dev server (Vite) are all running.
+web dev server (Vite) are all running. The `api` container generates the
+Prisma client and applies migrations against the dev database on every
+startup, so the schema is always current — no separate manual step.
 
 ### Option B — Native (no Docker)
 
@@ -113,12 +122,40 @@ pnpm --filter @kinvo/api run test               # API only
 pnpm --filter @kinvo/api exec vitest             # watch mode, API only
 ```
 
-API tests mock `core/database` and `core/redis` (see
-`apps/api/test/health.test.ts`) — they do **not** need a live Postgres/Redis
-to pass. That's intentional: unit/route tests should not depend on infra
-being up. (Phase 1+ adds real integration tests against a test database,
-per the testing strategy in `ARCHITECTURE.md` §18 — those will need
-Postgres running.)
+Unit tests (`test/unit/**`, `test/health.test.ts`, `test/request-context.test.ts`)
+mock or don't touch infra at all. **Integration tests
+(`test/integration/**`) hit a real Postgres** — deliberately, per the
+testing strategy in `ARCHITECTURE.md` §18: a mocked Prisma client cannot
+prove the tenant-scoping extension actually stops cross-tenant leaks, only
+a real database can.
+
+Integration tests run against a separate `kinvo_test` database, never the
+`kinvo` dev database — this lets `resetDatabase()` (`test/support/db.ts`)
+`TRUNCATE` freely between tests without ever touching your dev data.
+
+**One-time setup before tests will pass:**
+
+- Docker Compose users: `kinvo_test` is created automatically the first
+  time the `postgres` container initializes against a fresh volume (see
+  `docker/postgres-init/`). If you already had the `postgres-data` volume
+  from before this existed, run `docker compose down -v` once and bring it
+  back up.
+- Native (no Docker) users: create it yourself —
+  `createdb -U kinvo -h localhost kinvo_test` (or the equivalent in your
+  Postgres client).
+
+Either way, apply migrations to `kinvo_test` before running tests, and
+again after pulling any change that adds a new migration:
+
+```bash
+DATABASE_URL=postgresql://kinvo:kinvo@localhost:5432/kinvo_test \
+  pnpm --filter @kinvo/api exec prisma migrate deploy
+```
+
+Integration tests share one database and reset it via `TRUNCATE` in
+`beforeEach` — `vitest.config.ts` sets `fileParallelism: false` so two test
+files' `TRUNCATE`s never race each other. Don't remove that setting to
+"speed up" the suite; it'll deadlock instead.
 
 ## 7. How to build
 
@@ -136,24 +173,26 @@ for a real deployment; it isn't dependency-pruned yet (tracked for Phase 7).
 
 ## 8. How to reset the database
 
-**Right now (Phase 0 — no Prisma models yet):**
-
-```bash
-docker compose down -v   # -v drops the postgres-data volume — full reset
-docker compose up --build
-```
-
-**From Phase 1 onward (once Prisma models + migrations exist):**
-
 ```bash
 pnpm --filter @kinvo/api exec prisma migrate reset
 ```
 
-This drops the database, reapplies all migrations, and runs the seed script
-(once one exists). Don't use `docker compose down -v` once real migrations
-exist unless you specifically want to nuke Docker's Postgres volume too —
-`prisma migrate reset` is the scoped, correct tool for "give me a clean
-schema," and it works identically against Docker or a native Postgres.
+This drops the `kinvo` dev database, reapplies all migrations, and runs the
+seed script (once one exists — Phase 1 has no seed data yet, an honest gap,
+not an oversight). Point `DATABASE_URL` at `kinvo_test` first if you want to
+reset the test database instead:
+
+```bash
+DATABASE_URL=postgresql://kinvo:kinvo@localhost:5432/kinvo_test \
+  pnpm --filter @kinvo/api exec prisma migrate reset
+```
+
+Don't use `docker compose down -v` for a routine reset — it nukes the entire
+Postgres data volume (both `kinvo` and `kinvo_test`, plus loses the
+`docker-entrypoint-initdb.d` one-time init having already run, so
+`kinvo_test` won't exist again until the container starts fresh). Reach for
+`docker compose down -v` only when you actually want that, e.g. verifying
+the `docker/postgres-init/` script itself.
 
 ## 9. Troubleshooting
 
@@ -174,10 +213,6 @@ fails with a missing-export error)**
 Contracts hasn't been built yet, or is stale. Run `pnpm run build:contracts`.
 This is a compiled workspace package, not a symlinked source import — Vite/
 Rollup resolve it via `dist/`, not `src/`.
-
-**`prisma generate` / `prisma migrate dev` fails with "no models defined"**
-Expected in Phase 0 — see the Decisions log in `ARCHITECTURE.md`. This
-resolves itself the moment Phase 1 adds the first models.
 
 **`ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL` after `pnpm install`, mentioning
 "Ignored build scripts"**

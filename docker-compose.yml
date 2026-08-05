@@ -9,6 +9,7 @@ services:
       - '5432:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-kinvo}']
       interval: 5s
@@ -37,6 +38,12 @@ services:
       REDIS_URL: redis://redis:6379
       CORS_ORIGIN: http://localhost:5173
       LOG_LEVEL: debug
+      # Dev-only secret, not sensitive — see JWT_ACCESS_SECRET in apps/api/.env.example
+      # for the same story on the native-dev path. Never reused for staging/prod.
+      JWT_ACCESS_SECRET: dev-only-access-token-secret-at-least-32-characters-long
+      JWT_ACCESS_TTL: 15m
+      REFRESH_TOKEN_TTL_DAYS: '30'
+      REFRESH_TOKEN_COOKIE_NAME: kinvo_refresh_token
     ports:
       - '4000:4000'
     volumes:
