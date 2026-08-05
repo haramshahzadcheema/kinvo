@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type { ErrorRequestHandler } from 'express';
 import { ZodError } from 'zod';
 import { AppError } from '../errors/AppError';
@@ -10,6 +11,23 @@ interface ErrorResponseBody {
     requestId?: string;
     details?: unknown;
   };
+}
+
+// body-parser (behind express.json()) throws plain Error objects with a
+// pre-computed HTTP status for well-understood client mistakes — a body
+// over the size limit (413), syntactically invalid JSON (400) — that were
+// previously discarded and replaced with a generic 500 by the catch-all
+// below. Confirmed via chaos testing: both a >100kb request body and
+// malformed JSON syntax returned 500 instead of the status body-parser had
+// already computed. This checks structurally rather than importing
+// body-parser's error type directly, since any well-behaved upstream
+// middleware (not just this one) may throw the same shape.
+function upstreamClientErrorStatus(err: unknown): number | undefined {
+  if (typeof err !== 'object' || err === null) {
+    return undefined;
+  }
+  const status = 'status' in err ? err.status : 'statusCode' in err ? err.statusCode : undefined;
+  return typeof status === 'number' && status >= 400 && status < 500 ? status : undefined;
 }
 
 // Express identifies error middleware by arity (4 params) — `_next` must stay
@@ -28,6 +46,25 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     return;
   }
 
+  // Prisma throws this when it cannot reach Postgres at all (connection
+  // refused/timeout) — confirmed via chaos testing: killing the Postgres
+  // container made every DB-dependent route fall through to the generic
+  // 500 branch below. 500 implies our code is broken; 503 correctly tells
+  // the client (and any retry/backoff logic) that this is a transient
+  // downstream outage, not an application bug.
+  if (err instanceof Prisma.PrismaClientInitializationError) {
+    logger.error({ err, requestId }, 'Database connection unavailable');
+    const body: ErrorResponseBody = {
+      error: {
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'The service is temporarily unavailable. Please try again shortly.',
+        requestId,
+      },
+    };
+    res.status(503).json(body);
+    return;
+  }
+
   if (err instanceof ZodError) {
     const body: ErrorResponseBody = {
       error: {
@@ -38,6 +75,20 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
       },
     };
     res.status(400).json(body);
+    return;
+  }
+
+  const upstreamStatus = upstreamClientErrorStatus(err);
+  if (upstreamStatus !== undefined) {
+    logger.warn({ err, requestId }, 'Client error from upstream middleware');
+    const body: ErrorResponseBody = {
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'The request could not be processed.',
+        requestId,
+      },
+    };
+    res.status(upstreamStatus).json(body);
     return;
   }
 

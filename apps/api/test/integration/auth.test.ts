@@ -89,6 +89,36 @@ describe('POST /api/v1/auth/register-organization', () => {
     expect(response.status).toBe(400);
     expect(response.body.error.code).toBe('VALIDATION_ERROR');
   });
+
+  it('rejects malformed JSON with a clean 400, not a 500', async () => {
+    // Regression test for a bug found via chaos testing: body-parser
+    // (express.json()) throws an error with a correct pre-set status (400
+    // for invalid JSON syntax, 413 for an oversized body) that the
+    // catch-all error handler was discarding and replacing with a generic
+    // 500. Confirmed live against the running Docker stack for both cases.
+    const app = buildApp();
+    const response = await request(app)
+      .post('/api/v1/auth/login')
+      .set('Content-Type', 'application/json')
+      .send('{"email": "test@test.com", "password": ');
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects an oversized request body with a clean 413, not a 500', async () => {
+    const app = buildApp();
+    const response = await request(app)
+      .post('/api/v1/auth/register-organization')
+      .send({
+        organizationName: 'A'.repeat(2 * 1024 * 1024),
+        email: 'big-payload@example.com',
+        password: 'a-perfectly-good-password',
+        firstName: 'A',
+        lastName: 'B',
+      });
+
+    expect(response.status).toBe(413);
+  });
 });
 
 describe('POST /api/v1/auth/login', () => {
