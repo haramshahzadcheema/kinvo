@@ -894,7 +894,7 @@ project's runtime image size is already a known, separately tracked
 concern — see the `KNOWN LIMITATION` comment on the Dockerfile's `runtime`
 stage), and the actual fix here is one `RUN` line, not an architecture
 change. Switching base image families to dodge a one-line fix would be
-over-correcting. Revisit only if a *second*, unrelated musl/glibc-specific
+over-correcting. Revisit only if a _second_, unrelated musl/glibc-specific
 compatibility issue shows up — one data point is a fix, two is a pattern
 worth re-evaluating the base image over.
 
