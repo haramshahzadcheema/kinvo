@@ -227,10 +227,30 @@ export function createAuthService({
       throw new UnauthorizedError('Invalid refresh token.');
     }
 
-    if (existingToken.replacedByTokenId) {
-      // Reuse of an already-rotated token: theft/replay signal. Revoke
-      // every token in the family, forcing re-login on every device
-      // sharing it.
+    if (existingToken.expiresAt < new Date()) {
+      throw new UnauthorizedError('Refresh token is expired or revoked.');
+    }
+
+    // Atomically claim the token: this update only matches (and only one
+    // concurrent request can win it) if revokedAt is still null. Two
+    // simultaneous refresh calls presenting the same token used to both
+    // pass a plain read-then-check here, both proceed to mint a new token,
+    // and both "win" — confirmed empirically under concurrency (3 successes
+    // out of 15 concurrent requests against the live stack, with two
+    // simultaneously-unrevoked tokens left in the database). The
+    // WHERE-guarded updateMany serializes on Postgres's row lock: the
+    // loser's WHERE no longer matches once the winner's revokedAt commits,
+    // so claim.count is 0 for every request except the first.
+    const claim = await prisma.refreshToken.updateMany({
+      where: { id: existingToken.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+
+    if (claim.count === 0) {
+      // Lost the race against a concurrent refresh, or this token was
+      // already revoked by a prior rotation/reuse event. Either way,
+      // presenting a non-active token is a reuse/theft signal: revoke the
+      // entire family, forcing re-login on every device sharing it.
       await prisma.refreshToken.updateMany({
         where: { familyId: existingToken.familyId, revokedAt: null },
         data: { revokedAt: new Date() },
@@ -238,10 +258,6 @@ export function createAuthService({
       throw new UnauthorizedError(
         'Refresh token reuse detected; all sessions for this login have been revoked.',
       );
-    }
-
-    if (existingToken.revokedAt !== null || existingToken.expiresAt < new Date()) {
-      throw new UnauthorizedError('Refresh token is expired or revoked.');
     }
 
     const user = await prisma.user.findUniqueOrThrow({ where: { id: existingToken.userId } });
@@ -267,9 +283,11 @@ export function createAuthService({
       },
     });
 
+    // revokedAt was already set atomically by the claim step above — only
+    // replacedByTokenId needs setting now that the new token's id exists.
     await prisma.refreshToken.update({
       where: { id: existingToken.id },
-      data: { revokedAt: new Date(), replacedByTokenId: newToken.id },
+      data: { replacedByTokenId: newToken.id },
     });
 
     const accessToken = signAccessToken({

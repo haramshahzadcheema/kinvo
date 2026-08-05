@@ -158,6 +158,38 @@ describe('POST /api/v1/auth/refresh — rotation', () => {
     const response = await request(app).post('/api/v1/auth/refresh');
     expect(response.status).toBe(401);
   });
+
+  it('under concurrent requests with the same token, exactly one succeeds', async () => {
+    // Regression test for a real race condition found via chaos testing:
+    // refresh()'s check-then-write used to let multiple concurrent requests
+    // all read "not yet revoked" before any of them committed, so more than
+    // one request could mint a valid new token from the same original —
+    // confirmed empirically (3 successes out of 15 concurrent requests
+    // against the live stack, with two simultaneously-unrevoked tokens left
+    // in the database). The fix is an atomic updateMany claim guarded by
+    // `revokedAt: null`; this test proves concurrent requests can no longer
+    // all win it.
+    const app = buildApp();
+    const payload = registrationPayload();
+    const registerResponse = await request(app)
+      .post('/api/v1/auth/register-organization')
+      .send(payload);
+    const originalRefreshToken = extractRefreshTokenCookie(registerResponse);
+    const cookie = cookieHeader(originalRefreshToken);
+
+    const CONCURRENCY = 10;
+    const responses = await Promise.all(
+      Array.from({ length: CONCURRENCY }, () =>
+        request(app).post('/api/v1/auth/refresh').set('Cookie', cookie),
+      ),
+    );
+
+    const successes = responses.filter((r) => r.status === 200);
+    const serverErrors = responses.filter((r) => r.status >= 500);
+    expect(successes).toHaveLength(1);
+    expect(serverErrors).toHaveLength(0);
+    expect(responses.filter((r) => r.status !== 200).every((r) => r.status === 401)).toBe(true);
+  });
 });
 
 describe('POST /api/v1/auth/logout', () => {
