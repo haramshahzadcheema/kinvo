@@ -234,28 +234,45 @@ why" bugs come from if skipped):
 assignment row, doesn't mutate the old one — you want the history)`.
 - `YellowZoneItem`: `PENDING → IN_REVIEW → RESOLVED | DISMISSED`.
 
-**Tenant scoping enforcement**: a Prisma middleware (`$use`) that
-auto-injects `organizationId` into every `where` clause based on
-request-scoped context (AsyncLocalStorage), so a developer forgetting to
-scope a query fails closed rather than leaking cross-tenant data. This is
-the single highest-value security control in a multi-tenant app — treat it
-as non-negotiable, not a nice-to-have.
+**Tenant scoping enforcement**: a Prisma **Client Extension** (`$extends`,
+not the deprecated `$use` middleware API — see the Decisions log) that
+auto-injects `organizationId` into every `where`/`data`/`create`/`update`
+clause on tenant-scoped models, based on request-scoped context
+(AsyncLocalStorage). Fails closed: if the extension runs against a
+tenant-scoped model with no context bound, it throws rather than silently
+running an unscoped query. This is the single highest-value security
+control in a multi-tenant app — treat it as non-negotiable, not a
+nice-to-have.
 
-**Status (2026-08-04, Phase 0 audit finding C3):** the AsyncLocalStorage
-primitive this depends on already exists —
-`apps/api/src/core/tenant-context.ts` (`runWithTenantContext` /
-`getTenantContext`), with tests proving the guarantee that actually
-matters: concurrent requests for different organizations never leak
-context into each other. It is **not yet wired to anything** — there's no
-auth middleware to populate it from a JWT, and no Prisma `$use` middleware
-to consume it, because neither can exist before Phase 1's first models
-land. Phase 1's first commit must wire both: the auth middleware calling
-`runWithTenantContext` per request, and the Prisma middleware calling
-`getTenantContext` on every query — with an integration test that proves a
-query scoped to Organization A cannot return Organization B's rows even if
-a developer forgets a `where: { organizationId }` clause by hand. Building
-the tenant-scoping middleware without that test does not satisfy this
-requirement.
+**Status (resolved, Phase 1):** implemented in `apps/api/src/core/prisma.ts`.
+The AsyncLocalStorage primitive first built for Phase 0 audit finding C3 was
+widened from a narrow tenant-context into a full **Current Context** object
+— see §6a — and now lives in `apps/api/src/core/request-context.ts`
+(`runWithRequestContext` / `getRequestContext`). The `authenticate`
+middleware populates it once per request from the verified JWT; the Prisma
+extension's `$allOperations` hook consumes it on every operation against a
+model in `TENANT_SCOPED_MODELS` (currently `Membership`, `Invitation` — every
+model added in a future phase that holds organization-owned data belongs on
+that list the moment it exists). `test/integration/tenant-isolation.test.ts`
+proves the guarantee end-to-end: an authenticated request for Organization A
+cannot see or mutate Organization B's rows, even via list endpoints that
+pass no `where` clause at all — an earlier version of the extension only
+merged `organizationId` in when the caller had already supplied a `where`,
+which silently left `findMany()`-with-no-filter calls unscoped; the fix is
+an explicit allowlist of operations that always get `where` merged in,
+defaulting to `{}` rather than skipping the merge.
+
+A documented, logged escape hatch (`withoutTenantScope`) exists for the
+handful of legitimately pre-tenant-context operations — looking a user up
+by email at login, creating the first Membership during registration,
+resolving an Invitation by its token during acceptance. It operates on the
+raw, unextended Prisma client rather than an ALS "bypass" flag: an earlier
+implementation gating the extended client behind a bypass flag was
+empirically unreliable across `$transaction`'s internal continuations.
+Every call site supplies a `reason` and logs at `warn` — this must stay
+rare, and any new call site outside auth/registration/invitation-acceptance
+is a sign the operation should be redesigned to run inside a bound request
+context instead.
 
 ---
 
@@ -269,6 +286,16 @@ POST   /api/v1/auth/register-organization
 POST   /api/v1/auth/login
 POST   /api/v1/auth/refresh
 POST   /api/v1/auth/logout
+POST   /api/v1/auth/logout-all
+POST   /api/v1/auth/accept-invitation
+GET    /api/v1/auth/me
+
+GET    /api/v1/organizations/members
+PATCH  /api/v1/organizations/members/:membershipId
+DELETE /api/v1/organizations/members/:membershipId
+POST   /api/v1/organizations/invitations
+GET    /api/v1/organizations/invitations
+DELETE /api/v1/organizations/invitations/:invitationId
 
 GET    /api/v1/ships                 ?status=&page=
 POST   /api/v1/ships
@@ -311,10 +338,39 @@ grow — `Call` will be the largest table by an order of magnitude.
 - Rotation on every refresh; if a already-used/revoked refresh token is
   presented, treat it as a reuse/theft signal and revoke the entire token
   family for that user, forcing re-login.
-- `attachTenantContext` middleware reads `organizationId` off the verified
-  JWT and puts it in AsyncLocalStorage for the Prisma tenant-scoping
-  middleware to pick up — the client never supplies `organizationId` on a
-  request; it's derived, never trusted from input.
+- `authenticate` middleware reads the verified JWT's claims and puts them in
+  AsyncLocalStorage for the Prisma tenant-scoping extension to pick up — the
+  client never supplies `organizationId` on a request; it's derived, never
+  trusted from input.
+
+## 6a. Current Context
+
+Every authenticated request resolves a **Current Context** object exactly
+once — in the `authenticate` middleware, from the verified access token's
+claims — and binds it to AsyncLocalStorage via `runWithRequestContext`:
+
+```ts
+interface RequestContext {
+  userId: string;
+  organizationId: string;
+  membershipId: string;
+  role: Role;
+}
+```
+
+Downstream services never re-query these values; they call
+`getRequestContext()` (throws if called with no context bound — fail
+closed, same principle as tenant scoping) or receive `req.context` directly
+in a controller. This is also what the Prisma tenant-scoping extension
+reads to inject `organizationId`.
+
+Deliberately **no separate `Session` table** in Phase 1 — a session's
+identity is entirely reconstructable from a valid `RefreshToken` row
+(`userId`, `familyId`, `userAgent`, `ip`, `createdAt`, `revokedAt`). An
+"Active Sessions" page (list + "log out this device") is addable later as a
+pure read + targeted-revoke over the existing `RefreshToken` table, with
+zero schema changes — this constraint shaped the `RefreshToken` model's
+columns from the start rather than being retrofitted.
 
 ## 7. User Roles
 
@@ -420,6 +476,20 @@ conflate them:
   (who approved a campaign, who resolved a Yellow Zone item) — persisted,
   immutable, queryable by the product itself, not just ops.
 
+**Status (Phase 1):** the `AuditLog` table itself is out of scope for Phase 1
+(no placeholder entities — see the Phase 1 scoping decision below), but the
+architecture the full audit service will slot into already exists and is
+exercised today: `AuditLogger` (`apps/api/src/core/audit/audit-logger.ts`)
+is a one-method interface (`record(event: AuditEvent): void`), backed for
+now by a structured `pino` log line. Every event Phase 1's auth/org modules
+consider audit-worthy (login, logout, logout-all, org registration,
+invitation sent/accepted/revoked, role changed, membership removed) already
+emits through this interface with a typed `AuditEventType`
+(`apps/api/src/core/audit/audit-events.ts`). Swapping the pino-backed
+implementation for one that also persists to a real `AuditLog` table later
+is a change to `createAuditLogger`'s single implementation, not a change to
+any call site.
+
 ## 13. Error Handling
 
 `AppError` base class (`NotFoundError`, `ValidationError`, `ConflictError`,
@@ -505,12 +575,22 @@ NODE_ENV, PORT, LOG_LEVEL
 DATABASE_URL
 REDIS_URL
 JWT_ACCESS_SECRET, JWT_ACCESS_TTL
-JWT_REFRESH_SECRET, JWT_REFRESH_TTL
+REFRESH_TOKEN_TTL_DAYS, REFRESH_TOKEN_COOKIE_NAME
 CORS_ORIGIN
 CALL_E_API_KEY, CALL_E_WEBHOOK_SECRET, CALL_E_BASE_URL
 STORAGE_PROVIDER (s3|cloudinary), STORAGE_BUCKET, STORAGE_ACCESS_KEY, STORAGE_SECRET_KEY, STORAGE_REGION
 SENTRY_DSN (optional, Phase 7)
 ```
+
+**Status (Phase 1):** implemented in `apps/api/src/config/env.ts`, Zod-
+validated at boot exactly as specified. Only `JWT_ACCESS_SECRET` and
+`JWT_ACCESS_TTL` exist for tokens — there is no `JWT_REFRESH_SECRET`/
+`JWT_REFRESH_TTL` pair, because refresh tokens are **not** JWTs: per §6,
+they're opaque random values, stored hashed, compared by hash lookup. A
+"refresh token secret" would imply verifying a signature, which is the
+wrong mental model for an opaque-token-plus-rotation design. `CALL_E_*` and
+`STORAGE_*` remain unimplemented, correctly — they belong to Phase 4 and a
+later documents/upload phase respectively, not Phase 1.
 
 ## 18. Testing Strategy
 
@@ -578,16 +658,26 @@ Redis), CI skeleton (lint/typecheck/test on PR), env validation. _Ends with_:
 `docker compose up` gives a running API returning `200` on `/health` and a
 Vite dev server serving a blank shell.
 
-**Phase 1 — Authentication & Multi-tenancy**
-`Organization`, `User`, `RefreshToken` models + migration; register-org,
-login, refresh, logout; JWT + tenant-context middleware; RBAC scaffold.
-**Also mandatory for this phase's completion (see Decisions log): retire the
-Phase 0 `pg`-based database shim entirely** — generate the real Prisma
-client, migrate the readiness check to `prisma.$queryRaw`, delete
-`core/database.ts` and the `pg` dependency. Phase 1 is not done while both
-data-access paths exist side by side. _Ends with_: a real login screen
-backed by a real database, issuing tokens that scope subsequent requests to
-the right organization.
+**Phase 1 — Authentication & Multi-tenancy** (implemented)
+`Organization`, `User`, `Membership`, `RefreshToken`, `Invitation` models +
+migration; register-org, login, refresh (rotation + reuse detection),
+logout, logout-all, accept-invitation, me; JWT access tokens + the Current
+Context primitive (§6a); Prisma Client Extension tenant scoping (§4); fixed-
+role RBAC (`OWNER`/`ADMIN`/`DISPATCHER`/`VIEWER`); audit-logging interface
+(§12). Strictly scoped per the product owner's explicit instruction: no
+`Driver`, `Ship`, `Call`, or other Phase-2+ entities — Phase 1 proves the
+tenant-scoping pattern on `Organization`/`User`/`Membership` alone, nothing
+placeholder. `User.email` is globally unique (one platform identity per
+person); organization access is granted via `Membership`, not by email.
+**Also completed as part of this phase (see Decisions log): the Phase 0
+`pg`-based database shim was retired entirely** — the real Prisma client
+now backs the readiness check (`prisma.$queryRaw`), and `core/database.ts`
+plus the `pg` dependency are deleted. No dual data-access paths remain.
+Proven via `test/integration/` against a real Postgres, including
+cross-tenant isolation. _Ends with_: a real login/registration flow backed
+by a real database, issuing tokens that scope every subsequent request to
+the right organization — and an integration test suite that proves it,
+not just asserts it.
 
 **Phase 2 — Ship & Driver Management**
 Full schema for `Ship`, `TruckRequirement`, `DocumentRequirement`, `Driver`;
@@ -666,7 +756,8 @@ production call-handling logic on guessed webhook semantics.
 
 **Phase 0 database health check uses `pg`, not Prisma — explicitly temporary,
 migration mandated for Phase 1 (added 2026-08-04, confirmed with product
-owner same day).** `prisma generate` hard-refuses to run with zero models
+owner same day; executed and resolved in Phase 1 — see below).**
+`prisma generate` hard-refuses to run with zero models
 defined — this is a CLI constraint, not a config problem, confirmed
 empirically while building Phase 0. Rather than add a throwaway model just
 to unblock the tool (which would be exactly the kind of placeholder these
@@ -698,3 +789,122 @@ generate` for real.
 Phase 1 is not complete while both a `pg` pool and a Prisma client exist
 side by side — that would be exactly the "duplicate database layer" /
 carried-forward technical debt this note exists to prevent.
+
+**Resolved (Phase 1).** All six steps above are done: `core/database.ts`
+and the `pg`/`@types/pg` dependencies are deleted; `apps/api/src/core/prisma.ts`
+is the only data-access layer; the readiness check and shutdown hook both
+use the generated Prisma client. Confirmed via `grep` that nothing in the
+codebase imports `core/database.ts` or `pg`.
+
+**Tenant-scoping mechanism corrected: Prisma Client Extensions (`$extends`),
+not `$use` middleware (resolved, Phase 1).** §4's original text specified a
+Prisma `$use` middleware for tenant scoping. `$use` is deprecated as of
+Prisma 4.16 and does not compose reliably with `$transaction` the way this
+system needs. The Phase 1 implementation uses `$extends` instead — see §4's
+Status note and `apps/api/src/core/prisma.ts`. Functionally equivalent for
+this system's purposes (both hook every query); `$extends` is simply the
+non-deprecated, forward-compatible API for it.
+
+**Phase 1 scope, `User.email` uniqueness, and the 12 binding refinements
+(resolved 2026-08-05, per explicit product-owner direction).** Phase 1 was
+deliberately restricted to `Organization`, `User`, `Membership`,
+`RefreshToken`, `Invitation` — no `Driver`, `Ship`, `Call`, `YellowZoneItem`,
+`Notification`, or other Phase-2+ entity, even as a placeholder. The
+reasoning: a schema-only table with no business logic is exactly the kind
+of "looks done, isn't" artifact this project's engineering discipline rules
+out; those entities land in Phase 2 when they're actually implemented.
+`User.email` is globally unique (a staff member has one platform identity;
+multi-organization membership is expressed via multiple `Membership` rows,
+not multiple accounts) — `Driver.phone`, by contrast, stays organization-
+scoped per the driver-pool-scope decision above, since drivers are not
+platform identities. The product owner's Phase 1 approval also bound: the
+`Membership` table stays a real table (not collapsed onto `User`); refresh
+tokens use family-based rotation + reuse detection; no `Session` table
+(see §6a); fixed-role RBAC only, no dynamic permission system; a Current
+Context object resolved once per request (§6a); audit-event interfaces
+built now even though the persisted `AuditLog` table is deferred (§12).
+
+**Prisma engine binaries crash on `node:20-alpine` without the `openssl`
+package — root cause and fix (resolved 2026-08-05).** First surfaced during
+Phase 1 live-stack verification: `apps/api/Dockerfile`'s `dev` target ran
+`prisma migrate deploy` against the compose Postgres and failed with
+`Error: Could not parse schema engine response: SyntaxError: Unexpected
+token 'E', "Error load"... is not valid JSON`, preceded by `prisma:warn
+Prisma failed to detect the libssl/openssl version to use... Defaulting to
+"openssl-1.1.x"`.
+
+_Root cause._ Prisma ships its query/schema/migration engines as separate
+precompiled Rust binaries (not JS), one variant per platform +
+libc + OpenSSL ABI (e.g. `linux-musl-openssl-3.0.x`). At `prisma generate`
+/ CLI invocation time, Prisma detects which variant to fetch/run by
+shelling out to `openssl version`. `node:20-alpine` does not install the
+`openssl` package (the CLI binary) by default — Alpine 3.18+ ships OpenSSL
+3.x libraries as transitive deps of other packages, but not the `openssl`
+binary itself unless something explicitly depends on it. Detection failed,
+Prisma guessed the wrong ABI (`openssl-1.1.x`, which Alpine 3.23 — the
+version this image resolves to — doesn't ship at all; Alpine dropped
+OpenSSL 1.1.x years ago), and the resulting engine binary crashed
+immediately on startup instead of running: its native crash output ("Error
+load...") isn't the JSON-RPC response the Prisma CLI's parent process
+expects on stdout, hence the "could not parse" error. The CLI's error
+message is a symptom two layers removed from the actual fault.
+
+_Why this is a genuinely different failure mode than "does Node work on
+Alpine," and why `node -e "..."` succeeding is not evidence against it._
+Node.js's official binary **statically links OpenSSL into the `node`
+executable itself** — confirmed by `ldd $(which node)` inside the built
+image showing no dynamic `libssl`/`libcrypto` dependency at all. Node,
+npm, and pnpm's own crypto usage were never at risk. Prisma's engines are a
+**separate set of binaries with their own, independent, dynamic linkage**
+against whatever OpenSSL the OS provides. "Node runs fine" and "Prisma's
+engine binary runs fine" are unrelated claims on this image; Phase 1 is
+the first place this codebase actually exercises a Prisma engine binary
+inside a container, which is why nothing before it could have caught this.
+
+_Why Phase 0 never showed it._ Phase 0 deliberately had zero Prisma models
+(see the pg-shim decision above) — `prisma generate` hard-refuses to run
+with an empty schema, and the readiness check used the `pg` driver
+directly, so no Prisma engine binary was ever invoked inside a container
+until Phase 1 added real models and the Dockerfile's `dev` CMD started
+calling `prisma generate` / `prisma migrate deploy`. This was not a latent
+bug Phase 0 missed; the code path that triggers it did not exist yet.
+
+_The fix, and why it's the correct one, not a workaround._ `RUN apk add
+--no-cache openssl` in both `apps/api/Dockerfile` stages that start from
+`node:20-alpine` (`base`, and `runtime` — which builds from the bare base
+image directly rather than inheriting from `base`). This is not
+"reinstalling something Alpine forgot" — it restores the one piece Prisma's
+own detection genuinely needs (the `openssl` CLI) so detection succeeds and
+the correct engine variant is used, rather than papering over the symptom
+(e.g., pinning `binaryTargets` in `schema.prisma` to force a specific ABI
+without fixing why detection failed, which would silently break again on
+the next Prisma version that changes its default engine set). Verified:
+after the fix, `openssl version` inside the container reports `OpenSSL
+3.5.7`, `prisma generate` and `prisma migrate deploy` both complete
+cleanly, and `docker compose ps` shows all four services healthy end to
+end.
+
+_Would a Debian-based image (`node:20-slim`/`node:20`) have avoided this?_
+Yes — Debian-based images ship glibc and typically have OpenSSL's shared
+libraries and CLI present or trivially available via `apt`, and it's the
+image family Prisma's own documentation examples default to, so this
+specific failure mode is less commonly hit there. That is not, on its own,
+a reason to switch: Alpine's musl base is materially smaller (this
+project's runtime image size is already a known, separately tracked
+concern — see the `KNOWN LIMITATION` comment on the Dockerfile's `runtime`
+stage), and the actual fix here is one `RUN` line, not an architecture
+change. Switching base image families to dodge a one-line fix would be
+over-correcting. Revisit only if a *second*, unrelated musl/glibc-specific
+compatibility issue shows up — one data point is a fix, two is a pattern
+worth re-evaluating the base image over.
+
+_Future implications._ Any future native/compiled dependency added to
+`apps/api` (image processing, PDF generation, a different DB driver with
+native bindings, etc.) should be checked for the same class of issue before
+assuming "works on my machine" (which is typically Debian/glibc or macOS)
+implies "works in the Alpine container." The `RUN apk add --no-cache
+openssl` lines are now the canonical place to add any future
+system-package dependency an engine/native-binary dependency needs —
+don't scatter ad hoc `apk add` calls across stages if another one becomes
+necessary; consolidate in `base` (and mirror in `runtime` only because it
+deliberately doesn't inherit from `base`).
