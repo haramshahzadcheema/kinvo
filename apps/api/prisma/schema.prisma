@@ -1,6 +1,12 @@
-// Phase 0: connection + tooling only. No models yet.
-// Organization, User, and RefreshToken land in Phase 1, at which point
-// `prisma migrate dev` produces the first real migration.
+// Phase 1: identity, organization, and multi-tenancy foundation.
+//
+// Users are platform identities (globally unique email) — Organizations
+// grant permissions through Membership, not through a direct FK on User.
+// This is deliberate: it lets a user hold memberships in more than one
+// organization without a schema migration, even though Phase 1's
+// application logic only ever creates one membership per user. See
+// docs/ARCHITECTURE.md §4 for the tenant-scoping strategy this schema is
+// designed around.
 
 generator client {
   provider = "prisma-client-js"
@@ -9,4 +15,126 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String             @id @default(cuid())
+  name      String
+  slug      String             @unique
+  status    OrganizationStatus @default(ACTIVE)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  memberships Membership[]
+  invitations Invitation[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  lastLoginAt  DateTime?
+
+  memberships     Membership[]
+  refreshTokens   RefreshToken[]
+  sentInvitations Invitation[]   @relation("InvitationInvitedBy")
+
+  @@map("users")
+}
+
+model Membership {
+  id             String           @id @default(cuid())
+  userId         String
+  organizationId String
+  role           Role
+  status         MembershipStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+// Each row is one logged-in device/browser session — deliberately not
+// modeled as a separate "Session" entity, since it would just duplicate
+// these same fields. userAgent/ip/createdAt/revokedAt already carry what
+// an "active sessions" list or "log out this device" feature needs later;
+// no schema change required to add that UI on top of this table.
+model RefreshToken {
+  id                String    @id @default(cuid())
+  userId            String
+  tokenHash         String    @unique
+  familyId          String
+  userAgent         String?
+  ip                String?
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  replacedByTokenId String?   @unique
+  createdAt         DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+model Invitation {
+  id             String           @id @default(cuid())
+  organizationId String
+  email          String
+  role           Role
+  tokenHash      String           @unique
+  invitedById    String
+  status         InvitationStatus @default(PENDING)
+  expiresAt      DateTime
+  createdAt      DateTime         @default(now())
+  acceptedAt     DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InvitationInvitedBy", fields: [invitedById], references: [id])
+
+  @@index([organizationId])
+  @@map("invitations")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  DISPATCHER
+  VIEWER
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  REMOVED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
 }
