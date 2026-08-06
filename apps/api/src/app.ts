@@ -9,6 +9,7 @@ import type { Container } from './core/container';
 import { errorHandler } from './core/middleware/errorHandler';
 import { notFoundHandler } from './core/middleware/notFound';
 import { logger } from './core/logger';
+import { createAssignmentsRouter } from './modules/assignments/assignments.routes';
 import { createAuthRouter } from './modules/auth/auth.routes';
 import { createDriversRouter } from './modules/drivers/drivers.routes';
 import { createHealthRouter } from './modules/health/health.routes';
@@ -48,6 +49,7 @@ export function createApp(container: Container): Express {
   app.use('/api/v1/organizations', createOrganizationsRouter(container.organizationsService));
   app.use('/api/v1/ships', createShipsRouter(container.shipsService));
   app.use('/api/v1/drivers', createDriversRouter(container.driversService));
+  app.use('/api/v1/assignments', createAssignmentsRouter(container.assignmentsService));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

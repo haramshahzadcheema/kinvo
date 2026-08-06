@@ -1,6 +1,12 @@
 import type { DriverAvailabilityValue, UpdateDriverRequest } from '@kinvo/contracts';
 import { useState } from 'react';
+import { formatDateTime } from '../../lib/format';
 import { isApiError } from '../../lib/useAuth';
+import {
+  ASSIGNMENT_STATUS_LABEL,
+  ASSIGNMENT_STATUS_STYLE,
+} from '../assignments/statusStyles';
+import { useAssignments } from '../assignments/useAssignments';
 import { AVAILABILITY_LABEL, AVAILABILITY_STYLE } from './statusStyles';
 import { useDriver, useDriverMutations } from './useDrivers';
 
@@ -33,6 +39,12 @@ export function DriverDetailDrawer({
   onClose: () => void;
 }) {
   const { data: driver, isLoading } = useDriver(driverId);
+  const { data: assignmentHistory } = useAssignments({
+    driverId,
+    sortBy: 'invitedAt',
+    sortOrder: 'desc',
+    pageSize: 10,
+  });
   const { updateDriver, deleteDriver } = useDriverMutations();
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -186,6 +198,42 @@ export function DriverDetailDrawer({
                 <Detail label="Notes" value={driver.notes} />
               </div>
             )}
+
+            <div className="mt-5 border-t border-[#F5EEE0] pt-4">
+              <h3 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+                Assignment history
+              </h3>
+              {(assignmentHistory?.items.length ?? 0) === 0 ? (
+                <p className="text-xs text-[#8B9AA3]">No assignments yet.</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {assignmentHistory?.items.map((a) => (
+                    <div
+                      key={a.id}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-[#F5EEE0] px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-[12px] font-semibold text-[#0F2A38]">
+                          {a.shipName} · {a.destination}
+                        </div>
+                        <div className="text-[10.5px] text-[#8B9AA3]">
+                          Invited {formatDateTime(a.invitedAt)}
+                        </div>
+                      </div>
+                      <span
+                        className="flex-shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
+                        style={{
+                          background: ASSIGNMENT_STATUS_STYLE[a.status].bg,
+                          color: ASSIGNMENT_STATUS_STYLE[a.status].color,
+                        }}
+                      >
+                        {ASSIGNMENT_STATUS_LABEL[a.status]}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div className="mt-7 flex justify-between">
               <button

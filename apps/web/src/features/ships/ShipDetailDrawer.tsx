@@ -1,5 +1,6 @@
 import type { UpdateShipRequest } from '@kinvo/contracts';
 import { useState } from 'react';
+import { TruckRequirementDrivers } from '../assignments/TruckRequirementDrivers';
 import { formatDateTime, formatRate } from '../../lib/format';
 import { isApiError } from '../../lib/useAuth';
 import { SHIP_NEXT_STATUSES, SHIP_STATUS_LABEL, SHIP_STATUS_STYLE } from './statusStyles';
@@ -263,6 +264,12 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
                         {req.notes}
                       </div>
                     )}
+                    <TruckRequirementDrivers
+                      truckRequirementId={req.id}
+                      quantityNeeded={req.quantityNeeded}
+                      confirmedCount={req.confirmedCount}
+                      pendingCount={req.pendingCount}
+                    />
                   </div>
                 ))}
                 {ship.truckRequirements.length === 0 && !showAddDestination && (

@@ -14,7 +14,15 @@ export type AuditEventType =
   | 'ship.deleted'
   | 'driver.created'
   | 'driver.updated'
-  | 'driver.deleted';
+  | 'driver.deleted'
+  | 'assignment.created'
+  | 'assignment.confirmed'
+  | 'assignment.rejected'
+  | 'assignment.withdrawn'
+  | 'assignment.cancelled'
+  | 'assignment.no_show'
+  | 'assignment.completed'
+  | 'assignment.attempt_logged';
 
 export interface AuditEvent {
   type: AuditEventType;

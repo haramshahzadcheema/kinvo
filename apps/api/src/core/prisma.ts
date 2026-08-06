@@ -24,12 +24,29 @@ import { getRequestContext } from './request-context';
  * resolves the parent Ship through a tenant-scoped `prisma.ship` query,
  * and only then acts on its requirements via that already-verified ship's
  * id — a client-supplied shipId is never trusted directly.
+ *
+ * Phase 3: Assignment initially followed TruckRequirement/DocumentRequirement's
+ * pattern (no organizationId, ownership resolved by joining through
+ * truckRequirement -> ship -> organizationId) — that held up fine for
+ * lookups already scoped to one truck requirement or one driver, but the
+ * flat cross-ship "call list" view's default query (status=PENDING, no
+ * other filter) has no such anchor to join from, and paid for it: the only
+ * available access path scaled with an organization's entire historical
+ * assignment volume instead of with its currently-pending rows. Assignment
+ * now carries its own organizationId (immutable once set — an assignment's
+ * parent truckRequirement/ship never moves to a different organization
+ * after creation, so there is nothing for it to drift from) and goes on
+ * this list like Ship/Driver. AssignmentAttempt is unchanged and still not
+ * tenant-scoped — every access to it goes through an already-resolved,
+ * already-owned Assignment first (see assignments.service.ts's
+ * resolveOwnedAssignment), so it has never needed its own scope.
  */
 const TENANT_SCOPED_MODELS = new Set<Prisma.ModelName>([
   'Membership',
   'Invitation',
   'Ship',
   'Driver',
+  'Assignment',
 ]);
 
 type ScopableArgs = {

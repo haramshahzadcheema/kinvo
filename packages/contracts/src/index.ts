@@ -107,3 +107,28 @@ export type {
   DriverListQuery,
   DriverListResponse,
 } from './driver.schema';
+
+export {
+  assignmentStatusSchema,
+  attemptOutcomeSchema,
+  assignmentAttemptSchema,
+  logAttemptRequestSchema,
+  assignmentSchema,
+  createAssignmentRequestSchema,
+  rejectAssignmentRequestSchema,
+  cancelAssignmentRequestSchema,
+  assignmentListQuerySchema,
+  assignmentListResponseSchema,
+} from './assignment.schema';
+export type {
+  AssignmentStatusValue,
+  AttemptOutcomeValue,
+  AssignmentAttemptDto,
+  LogAttemptRequest,
+  AssignmentDto,
+  CreateAssignmentRequest,
+  RejectAssignmentRequest,
+  CancelAssignmentRequest,
+  AssignmentListQuery,
+  AssignmentListResponse,
+} from './assignment.schema';

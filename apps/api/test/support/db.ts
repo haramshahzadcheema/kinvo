@@ -4,6 +4,6 @@ import { prisma } from '../../src/core/prisma';
  * enough at this data volume; no cross-test pollution to reason about. */
 export async function resetDatabase(): Promise<void> {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "invitations", "refresh_tokens", "memberships", "users", "organizations", "ships", "drivers", "truck_requirements", "document_requirements" RESTART IDENTITY CASCADE',
+    'TRUNCATE TABLE "invitations", "refresh_tokens", "memberships", "users", "organizations", "ships", "drivers", "truck_requirements", "document_requirements", "assignments", "assignment_attempts" RESTART IDENTITY CASCADE',
   );
 }

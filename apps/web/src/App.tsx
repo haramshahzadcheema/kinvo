@@ -12,6 +12,7 @@ import {
   ShipIcon,
   TruckIcon,
 } from './components/icons';
+import { AssignmentsPage } from './features/assignments/AssignmentsPage';
 import { AuthScreen } from './features/auth/AuthScreen';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { DriversPage } from './features/drivers/DriversPage';
@@ -19,10 +20,10 @@ import { ShipsPage } from './features/ships/ShipsPage';
 import { AuthProvider } from './lib/auth';
 import { useAuth } from './lib/useAuth';
 
-type Tab = 'dashboard' | 'ships' | 'drivers';
+type Tab = 'dashboard' | 'ships' | 'drivers' | 'assignments';
 
 interface NavItem {
-  key: Tab | 'assignments' | 'calls' | 'notifications' | 'settings';
+  key: Tab | 'calls' | 'notifications' | 'settings';
   label: string;
   icon: (props: { className?: string }) => React.ReactElement;
   comingSoon?: boolean;
@@ -32,7 +33,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
   { key: 'ships', label: 'Ships', icon: ShipIcon },
   { key: 'drivers', label: 'Drivers', icon: TruckIcon },
-  { key: 'assignments', label: 'Assignments', icon: AssignmentIcon, comingSoon: true },
+  { key: 'assignments', label: 'Assignments', icon: AssignmentIcon },
   { key: 'calls', label: 'Calls', icon: PhoneIcon, comingSoon: true },
   { key: 'notifications', label: 'Notifications', icon: BellIcon, comingSoon: true },
   { key: 'settings', label: 'Settings', icon: SettingsIcon, comingSoon: true },
@@ -74,7 +75,7 @@ function Shell() {
   }
 
   function selectNav(key: NavItem['key']) {
-    if (key === 'dashboard' || key === 'ships' || key === 'drivers') {
+    if (key === 'dashboard' || key === 'ships' || key === 'drivers' || key === 'assignments') {
       navigate(key);
     }
   }
@@ -217,6 +218,7 @@ function Shell() {
           {tab === 'dashboard' && <DashboardPage onNavigate={navigate} />}
           {tab === 'ships' && <ShipsPage autoOpenCreate={shipAutoOpen} />}
           {tab === 'drivers' && <DriversPage autoOpenCreate={driverAutoOpen} />}
+          {tab === 'assignments' && <AssignmentsPage />}
         </main>
       </div>
     </div>

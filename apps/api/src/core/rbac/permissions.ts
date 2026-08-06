@@ -34,7 +34,11 @@ const ORGANIZATION_MANAGEMENT_ACTIONS: readonly Action[] = [
 // Truck/document requirements aren't separately permissioned — they're
 // sub-resources only ever edited as part of a ship record (matching the
 // actual UI, where destinations are fields on the "Add Ship" form, not a
-// standalone screen), so ships:manage covers them.
+// standalone screen), so ships:manage covers them. Assignment (Phase 3)
+// is the same shape of sub-resource — a driver's engagement with a truck
+// requirement — and reuses ships:read/ships:manage for the same reason,
+// even though its API surface is a flat top-level resource rather than a
+// nested one (see assignments.routes.ts for why).
 const LOGISTICS_ACTIONS: readonly Action[] = [
   'ships:read',
   'ships:manage',

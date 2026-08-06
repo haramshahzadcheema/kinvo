@@ -1417,3 +1417,351 @@ dispatcher actually captures a driver — mid-phone-call, fast, refine
 later. Now that driver Edit exists, "refine later" is a real path, not a
 dead end, so the asymmetry between the two create forms is a considered
 UX decision, not an inconsistency to fix.
+
+## Phase 3 backend: Assignment (driver ↔ truck-requirement engagement)
+
+A pre-implementation design review (treating the drafted Phase 3 spec as
+another team's proposal to challenge, not a plan to execute) produced
+three real changes before any schema was written, plus a fourth decision
+made mid-build once the ship-cascade requirement was fully understood.
+
+**Assignment is a flat top-level resource (`/api/v1/assignments`), not
+nested under ships or truck requirements (decided before implementation,
+2026-08-06).** The drafted spec implied nesting
+(`/ships/:shipId/truck-requirements/:id/assignments`), matching how
+`TruckRequirement`/`DocumentRequirement` nest under `Ship`. But the spec
+also required two views nesting can't serve without a second router
+anyway: a cross-ship "call list" (`GET /assignments?status=PENDING`, every
+pending outreach across the whole organization, for a dispatcher working
+the phones) and a per-driver history (`GET /assignments?driverId=X`, for
+the driver detail drawer). A 4-level nested URL for the primary CRUD
+operations plus a second flat router for the two list views that matter
+most would be worse than one consistent flat resource. `Assignment`
+represents a relationship between two independent aggregates (a
+`TruckRequirement` and a `Driver`) rather than a child owned by one parent
+the way a truck requirement is owned by its ship — REST's "nest owned
+sub-resources" rule doesn't actually apply here. Tenant ownership is still
+resolved the same relational way as `TruckRequirement`/`DocumentRequirement`
+(§4's pattern): through `truckRequirement.ship.organizationId`, never a
+denormalized column, via `resolveOwnedAssignment` in
+`assignments.service.ts`. No new RBAC actions were added — `Assignment`
+reuses `ships:read`/`ships:manage` for the same reason
+`TruckRequirement` does (see `core/rbac/permissions.ts`).
+
+**Assignment carries `agreedRate` only, no `agreedCurrency` (the
+product owner's own suggestion, adopted after critical review, not
+adopted by default — 2026-08-06).** The suggestion was: since
+`TruckRequirement` already owns `rate`/`currency` for the requirement as
+posted, an individual assignment negotiating a different rate with one
+driver still negotiates in the same currency — a requirement posted in
+USD does not suddenly get settled in EUR because one driver haggled the
+number. Reviewed for the counterargument (a multi-currency corridor where
+a requirement might genuinely be filled by drivers paid in different
+currencies) and rejected: nothing else in the Phase 2 schema supports
+per-driver currency at all — `TruckRequirement.currency` is a single
+enum column, not a list — so an `agreedCurrency` field would imply
+capability the rest of the schema doesn't have, and would let the app
+silently commit to a real-world business rule (currency can vary
+per-driver within one requirement) that was never actually a stated
+requirement. If cross-currency negotiation ever becomes real, it is a
+`TruckRequirement`-level modeling change (e.g., multiple currency-tagged
+sub-postings), not a field to bolt onto `Assignment`. Adopted as
+specified.
+
+**`AssignmentAttempt` is a separate append-only table, not a counter or
+a JSON blob on `Assignment` (decided before implementation,
+2026-08-06).** Phase 4's CALL-E integration needs full outreach history —
+every no-answer, busy signal, and wrong-number, in order, each with its
+own timestamp — to drive retry/backoff logic and to show a dispatcher
+"we've tried this driver 3 times today." A counter can't answer "when was
+the last attempt" and a JSON blob on `Assignment` can't be queried or
+indexed. The table carries a nullable, unique, currently-unpopulated
+`externalCallId` specifically as a Phase 4 seam — Phase 3 never writes it,
+but the column exists now so Phase 4's webhook handler doesn't need a
+migration to start recording it. `AttemptOutcome.SYSTEM_ERROR` is reserved
+the same way: a real enum value Phase 3's manual-outreach UI never
+produces, present only so Phase 4 has somewhere to record a CALL-E-side
+failure without a schema change at integration time.
+
+**Ship cancellation/completion cascades into Assignment and Driver via
+direct Prisma calls inside `ships.service.ts`, not by calling into
+`assignments.service.ts` (decided during implementation, 2026-08-06).**
+`assignments.service.ts` already imports from `ships.service.ts` for
+tenant resolution (`resolveTenantScopedTruckRequirement`); having
+`ships.service.ts` call back into `assignments.service.ts` for the
+cascade would create a circular module dependency. Cancelling or
+completing a ship needs to: bulk-transition its live `Assignment` rows
+to `CANCELLED`/`COMPLETED` and reset the affected drivers'
+`availability` back to `IDLE` (clearing `currentShipId`) — this is
+mechanical enough (`updateMany` on both tables) not to need the state
+machine or per-transition side effects `assignments.service.ts` enforces
+for direct, single-assignment actions. `cascadeShipCancellation` and
+`cascadeShipCompletion` live in `ships.service.ts` as the two functions
+that own this cross-entity effect.
+
+**Business rules enforced on `TruckRequirement` mutation once
+assignments exist, added during implementation once the interaction was
+traced through (2026-08-06).** `updateTruckRequirement` now blocks
+changing `destination`/`truckType` once any assignment is
+`PENDING`/`CONFIRMED` (a driver agreed to one destination; silently
+retargeting the requirement after they've committed is a correctness
+bug, not a feature), and blocks reducing `quantityNeeded` below the
+current `CONFIRMED` count (with the confirmed count in the 409 payload
+so the frontend can render a specific message, not a generic conflict).
+`removeTruckRequirement` proactively counts active assignments before
+attempting the delete (clean 409 with a specific message) and additionally
+catches Postgres FK violation (`P2003`) as defense-in-depth — the
+`onDelete: Restrict` on `Assignment.truckRequirementId` guarantees the
+database itself refuses the delete either way, so the proactive check is
+about giving a good error message, not about correctness. Verified by four
+dedicated tests in `assignments.test.ts`'s "ship + truck requirement side
+effects from assignments" block.
+
+All of the above shipped with the full Phase 3b backend (schema,
+migrations including a hand-authored partial unique index for
+"one active engagement per driver+requirement pair," Zod contracts,
+service/controller/routes, container/app wiring) covered by 26 new
+integration tests plus zero regressions in the pre-existing 117, and a
+clean `typecheck`/`lint`/`build` across all three workspaces.
+
+## Phase 3 frontend: assignment UI surfaces
+
+**`AssignmentRow` and `useAssignmentRowActions` are extracted into shared
+files (`features/assignments/AssignmentRow.tsx`,
+`useAssignmentRowActions.ts`) rather than duplicated per surface (added
+2026-08-06).** The assignment state machine's UI — status badge, the
+per-status action buttons, the inline reason/attempt forms — is identical
+whether it's shown embedded in a ship's truck-requirement card
+(`TruckRequirementDrivers.tsx`) or in the flat cross-ship
+`AssignmentsPage.tsx`. The only real difference is context: the flat page
+needs to say which ship/destination each row belongs to (`showContext`
+prop) since rows from many requirements are interleaved, while the
+ship-drawer embed already has that context from its surrounding card.
+Extracting once two call sites existed (not preemptively) avoided
+~150 lines of duplicated JSX and, more importantly, duplicated race-prone
+mutation-state bookkeeping (`rowAction`/`reasonInput`/`attemptOutcome`)
+that would have been easy to let drift between the two copies.
+
+**The Assignments nav item is real, not a placeholder — it's the flat
+"call list" the Assignment API's flat-resource shape (see the Phase 3
+backend decisions above) was built to serve.** It defaults to filtering
+on `PENDING`, since that's the actual queue a dispatcher works from, with
+one-click toggle filters for `CONFIRMED`/`REJECTED`/`NO_SHOW` and a "show
+all statuses" escape hatch. Every action available in the ship drawer
+(confirm/reject/withdraw/cancel/no-show/log attempt) works identically
+here — verified live that confirming an assignment from this page updates
+the same React Query cache the ship drawer reads, with no separate
+invalidation logic needed since both surfaces call the same
+`useAssignmentMutations`.
+
+**`DriverDetailDrawer`'s new "Assignment history" section is read-only —
+deliberately not given the same action buttons as the other two surfaces
+(added 2026-08-06).** A driver's history view answers "what has this
+driver been invited to and how did it go," not "let me manage an
+engagement from here" — the latter already has two homes. Adding a third
+place capable of triggering `confirm`/`cancel`/etc. would let the same
+state machine be driven from three independent UI trees for no real
+dispatcher benefit, and every future change to the transition rules would
+need to be checked against three call sites instead of two. Considered
+and rejected.
+
+**Dashboard's new "Shortages" panel required zero new backend calls.**
+`confirmedCount`/`pendingCount` are already present on every
+`TruckRequirementDto` returned by the existing `GET /ships` list endpoint
+(computed server-side, see the Phase 3 backend section above) — the panel
+just filters `useShips`'s already-fetched data for
+`confirmedCount < quantityNeeded` across non-terminal ships. Placed first
+in the dashboard's panel grid, ahead of "Today's operations," since an
+under-staffed destination is a more urgent "what needs your attention"
+signal than a scheduling reminder.
+
+**Docker dev-container caveat, not a code defect (discovered during this
+phase's live verification, 2026-08-06):** the `api`/`web` containers'
+`tsx watch` / Vite dev servers did not pick up several rounds of source
+edits made via the host filesystem during this session — verified by
+comparing a live `GET /ships/:id` response (missing `confirmedCount`)
+against the same code on disk (which had it). This is the well-known
+Windows-bind-mount-into-Linux-container inotify gap: file-change events
+from the NTFS-backed bind mount don't reliably reach the container's
+file watcher. Restarting the containers (`docker compose restart api
+web`) always picked up current disk content immediately, since the
+container's startup command rebuilds/regenerates from scratch every time
+— this is a "restart after editing while the stack is already running"
+operational note for local development, not a bug to fix in the
+Dockerfile or compose config.
+
+## Phase 3 final review pass
+
+A self-critical pass over the finished Phase 3 work — schema through
+frontend — treating it as another team's PR to audit, per the same
+discipline as the Phase 2 final review pass above. One real defect and
+one real (if minor) UI-state bug were found and fixed; both are recorded
+here with how they were found.
+
+**`AssignmentDto` had no way to show what a `PENDING` assignment was
+actually offering once `agreedRate` was null (resolved 2026-08-06).**
+`agreedRate: null` means "use the truck requirement's posted rate" per
+`createAssignmentRequestSchema`'s own comment, but nothing on the
+`Assignment` DTO carried that posted rate — only `driverName`/`shipName`/
+`destination`/`truckType` were denormalized onto it. This was invisible
+in the ship drawer (where the embedded panel had the parent
+`TruckRequirement`'s rate available as a prop) but broke exactly the
+surface Phase 3 was built to add: the flat cross-ship `AssignmentsPage`,
+which has no parent truck requirement in scope and rendered "Rate not
+set" for every assignment using the posted rate — the majority case,
+since an explicit `agreedRate` override is the exception, not the rule.
+Found by using the newly-built Assignments page live rather than trusting
+the ship-drawer test coverage to generalize. Fixed by denormalizing
+`rate`/`rateCurrency` onto `AssignmentDto` itself (same reasoning as the
+other denormalized fields, see `assignment.schema.ts`), which also let
+`AssignmentRow` drop its external `rate`/`rateCurrency` props entirely —
+the DTO is now self-sufficient, which is a real simplification, not just
+a bug fix. Verified live: the flat page now shows "PKR 25,000" for a
+`PENDING` assignment on a requirement with a posted rate, where it
+previously showed "Rate not set".
+
+**Switching the status filter on the Assignments page could leave a
+stale, half-filled reject/cancel/log-attempt form in state (resolved
+2026-08-06).** `useAssignmentRowActions`'s `rowAction` state is keyed by
+assignment id and shared across the whole page; switching the status
+filter unmounts the row whose form was open without clearing that state,
+so returning to the same filter later could resurface an open form with
+previously-typed text. Never a data-corruption risk (nothing is
+submitted until the dispatcher explicitly confirms), but a real,
+findable UI inconsistency — caught by reasoning through the interaction
+rather than by any test (there is no frontend test coverage for this
+component; see the note below). Fixed with a `changeStatusFilter` wrapper
+that closes any open row action before switching. Not applicable to the
+ship-drawer's embedded panel, which scopes one `useAssignmentRowActions`
+instance to one truck requirement with nothing else to switch away from.
+
+**Considered and explicitly deferred, not fixed:** frontend unit/component
+tests. This project's established testing discipline (see §18 and the
+Phase 2 passes above) is backend integration tests against a real
+database plus live browser verification for the frontend, not a
+component-test suite — `apps/web/src/test/App.test.tsx` remains the only
+frontend test file, covering app-shell auth flows, consistent with the
+pattern already set in Phase 2. Phase 3's frontend work was verified live
+instead (every state transition, both the ship-drawer and flat-page
+surfaces, desktop and mobile viewports — see the verification note
+below), matching how `ShipDetailDrawer`/`DriverDetailDrawer` were
+verified when they shipped. Adding a component-test framework now would
+be a project-wide tooling decision, not a Phase 3-scoped fix.
+
+**Verification performed for this pass:** full `typecheck`/`lint`/`test`
+(150 tests: 143 API integration, 5 contracts, 2 web)/`build` across all
+three workspaces, clean on every run after each fix; live verification in
+a real browser (registered a fresh test organization, created a ship
+with a truck requirement, created a driver, and exercised invite →
+confirm → cancel-with-required-reason → re-approach-after-cancellation →
+log-attempt → reject-with-optional-reason end to end, from both the ship
+drawer and the flat Assignments page, confirming both surfaces share one
+cache and stay in sync) at both a 1280×900 desktop viewport and a
+390×844 mobile viewport. One operational discovery (not a code defect,
+recorded above): the dev containers require a restart after host-side
+source edits to reliably pick them up on this Windows/Docker setup.
+
+**Verdict: Phase 3 is production-ready.** Tenant isolation, RBAC, and the
+assignment state machine are enforced server-side and independently
+verified by 26 dedicated integration tests (including a real concurrent-
+confirm race and a real partial-unique-index conflict) plus zero
+regressions in the pre-existing 117. The frontend surfaces (ship drawer,
+flat Assignments page, dashboard shortages panel, driver history) all
+read from and write to the same backend through the same shared hooks,
+verified live rather than assumed. No placeholders, TODOs, or dead code
+remain from this phase's work.
+
+## Phase 3 hardening pass
+
+A brutal, adversarial architecture review (treating Phase 3 as production
+code a Staff Engineer had to approve, not code to defend) found four
+blocking correctness/scalability defects and three lower-severity
+inconsistencies. Each was fixed individually — smallest possible change,
+existing tests re-verified unchanged, new tests added for the specific
+defect — never a broad refactor. Full suite (159 tests across all three
+workspaces) and `typecheck`/`lint`/`build` stayed green after every single
+fix, not just at the end.
+
+**Blocker 1 — Driver.availability could drift from the truth and cause a
+real double-booking (resolved 2026-08-06).** `PATCH /drivers/:id` let
+`availability`/`currentShipId` be set to anything, with zero awareness of
+a live `CONFIRMED` `Assignment`. A dispatcher marking a genuinely-busy
+driver "Idle" made them reappear in the driver picker's IDLE-only filter,
+inviting a real double-booking. Fixed in `drivers.service.ts`'s
+`updateDriver`: while a driver has a live `CONFIRMED` assignment,
+`availability` can't move away from `CONFIRMED` and `currentShipId` can't
+change, except through the assignment workflow itself
+(`cancelAssignment`/`markNoShow`), which already clears both correctly.
+Considered and rejected: deriving `availability` entirely from `Assignment`
+data — `ON_CALL`/`ESCALATED` have no equivalent to derive from, so a
+stored column would still be needed either way.
+
+**Blocker 2 — the ship-cancellation/completion cascades were not race-safe,
+and had a separate, deterministic over-broad-reset bug (resolved
+2026-08-06).** `cascadeShipCancellation`/`cascadeShipCompletion` selected a
+snapshot of "active" assignment/driver ids, then updated by that captured
+id list — an assignment independently transitioned in the gap between
+select and update would get silently overwritten back to
+`CANCELLED`/`COMPLETED`. Separately, cancellation reset *every* driver from
+a `PENDING`-or-`CONFIRMED` capture to `IDLE`, even though only `CONFIRMED`
+ever touched availability — clobbering an unrelated, independently-set
+`ON_CALL`/`ESCALATED` flag on a driver whose only connection was a
+still-`PENDING` invite. Fixed by filtering the destructive `updateMany`s by
+a live condition re-checked at write time (the same technique
+`confirmAssignment` already used), and scoping the driver reset to only
+drivers who had a genuinely `CONFIRMED` engagement, re-checked against
+`currentShipId` at write time.
+
+**Blocker 3 — no index served the flat Assignments page's default query
+(resolved 2026-08-06).** `GET /assignments?status=PENDING` had no direct
+path to one organization's rows — tenant scoping only existed via a
+`truckRequirement.ship.organizationId` join. Corrected from the review's
+own overstated diagnosis ("no usable index at all" — a join-driven plan
+was actually available, just one that scaled with an org's *entire*
+historical volume, not its pending rows) before fixing it: denormalized
+`organizationId` directly onto `Assignment` (immutable once set, same
+pattern as `Ship`/`Driver`), added it to the tenant-scoping extension, and
+indexed `[organizationId, status]`. Verified with a real `EXPLAIN` against
+the dev database that the new index satisfies both predicates as a direct
+`Index Cond`. The riskiest part of this fix — whether ALS request-context
+propagates reliably into `tx.*` calls inside `$transaction` for a
+newly-tenant-scoped model — was verified empirically (via the
+already-passing concurrent-confirm test exercising the identical shape for
+`Driver`) before, not after, making the change.
+
+**Blocker 4 — `updateShipStatus` and `cancelAssignment`/`markNoShow` could
+leave inconsistent state on a crash mid-sequence (resolved 2026-08-06).**
+Each performed its primary write, then a second, logically-dependent write
+as a separate, non-transactional follow-up call — a crash between the two
+had no reconciliation path. Fixed by wrapping each full sequence in one
+`$transaction`, reusing the `TransactionClient` typing convention already
+established in `organizations.service.ts` rather than inventing a new one.
+
+**Non-blocker: `deleteDriver` had no defense against its own FK constraint
+(resolved 2026-08-06).** `Assignment.driverId`'s `onDelete: Restrict` (added
+in Phase 3) made deleting a driver with any assignment history throw a raw,
+uncaught 500 — `removeTruckRequirement` had already been given the correct
+proactive-check-plus-`P2003`-fallback shape for the identical situation in
+the same phase; `deleteDriver` was simply missed. Fixed by applying the
+exact same shape, not a new one.
+
+**Non-blocker, investigated and found to need no code change: the
+hand-authored partial unique index's migration-tooling visibility.** The
+review's proposed remediation — "needs a CI check that asserts the
+constraint exists" — turned out to already exist: `createAssignment` has no
+application-level duplicate check, so **rejects creating a second active
+assignment for the same driver and requirement** is a direct, unmediated
+proof of the constraint. Verified, not assumed: dropped the index on the
+test database, confirmed that exact test fails with the precise expected
+signature (`409` becomes `201`), then restored it and confirmed the suite
+was clean again. No second check was added — it would be duplicate
+coverage for the same fact.
+
+**Non-blocker: `POST /assignments/:id/attempts` returned the whole parent
+Assignment instead of the attempt it actually creates (resolved
+2026-08-06).** Verified before changing it that nothing depended on the old
+shape — `useAssignmentMutations`'s `logAttempt` only invalidates queries on
+success, never reads the mutation's return value — making this a safe,
+non-breaking correction rather than a real API contract risk. Now returns
+the created `AssignmentAttemptDto` directly; confirmed live in the browser
+that the UI updates identically either way.

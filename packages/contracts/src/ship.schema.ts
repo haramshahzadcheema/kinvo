@@ -18,6 +18,11 @@ export type ShipStatusValue = z.infer<typeof shipStatusSchema>;
 // destination and truck type, so rate/rateCurrency live on the requirement,
 // not on Ship. rate is nullable: a requirement can exist before its price
 // is negotiated, and there's no ship-level fallback to substitute.
+//
+// confirmedCount/pendingCount are derived (Phase 3) — computed from the
+// requirement's Assignment rows at read time, never stored as columns.
+// Storing them would create a second source of truth that could drift
+// from the actual Assignment rows; deriving them keeps exactly one.
 export const truckRequirementSchema = z.object({
   id: z.string(),
   destination: z.string(),
@@ -26,6 +31,8 @@ export const truckRequirementSchema = z.object({
   rate: z.number().nullable(),
   rateCurrency: z.string().nullable(),
   notes: z.string().nullable(),
+  confirmedCount: z.number().int().nonnegative(),
+  pendingCount: z.number().int().nonnegative(),
 });
 export type TruckRequirementDto = z.infer<typeof truckRequirementSchema>;
 

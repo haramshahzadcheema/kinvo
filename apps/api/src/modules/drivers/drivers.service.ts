@@ -190,6 +190,36 @@ export function createDriversService({
       await assertShipBelongsToOrg(input.currentShipId);
     }
 
+    // availability/currentShipId are otherwise owned by the assignment state
+    // machine (confirmAssignment/cancelAssignment/markNoShow, and the ship
+    // cancellation/completion cascades in ships.service.ts all set both
+    // together as a side effect of a real event). This endpoint must not let
+    // either one drift away from a live CONFIRMED assignment out from under
+    // it — that's exactly how a driver gets double-booked: marked IDLE here
+    // while still genuinely committed, then picked up as "available" and
+    // confirmed onto a second job. Ending a real engagement must go through
+    // cancelAssignment/markNoShow, which correctly clears both fields.
+    if (input.availability !== undefined || input.currentShipId !== undefined) {
+      const activeAssignment = await prisma.assignment.findFirst({
+        where: { driverId, status: 'CONFIRMED' },
+        select: { truckRequirement: { select: { shipId: true } } },
+      });
+
+      if (activeAssignment) {
+        const leavingConfirmed =
+          input.availability !== undefined && input.availability !== 'CONFIRMED';
+        const changingShip =
+          input.currentShipId !== undefined &&
+          input.currentShipId !== activeAssignment.truckRequirement.shipId;
+
+        if (leavingConfirmed || changingShip) {
+          throw new ConflictError(
+            'This driver has an active confirmed assignment. Cancel or complete it before changing availability or ship directly.',
+          );
+        }
+      }
+    }
+
     let driver: DriverWithShip;
     try {
       driver = await prisma.driver.update({
@@ -234,7 +264,30 @@ export function createDriversService({
       throw new NotFoundError('Driver not found.');
     }
 
-    await prisma.driver.delete({ where: { id: driverId } });
+    // Assignment.driverId is onDelete: Restrict — a driver with live
+    // assignment history must never be silently deletable out from under
+    // it. Same shape as ships.service.ts's removeTruckRequirement:
+    // proactively checked for the common case (a specific message), with
+    // the P2003 catch below as defense-in-depth for the check-then-delete
+    // race and for historical (non-active) assignments, which the FK still
+    // blocks even though this proactive check only looks for active ones.
+    const activeCount = await prisma.assignment.count({
+      where: { driverId, status: { in: ['PENDING', 'CONFIRMED'] } },
+    });
+    if (activeCount > 0) {
+      throw new ConflictError('Cannot delete a driver with active assignments. Cancel them first.');
+    }
+
+    try {
+      await prisma.driver.delete({ where: { id: driverId } });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+        throw new ConflictError(
+          'Cannot delete a driver with active assignments. Cancel them first.',
+        );
+      }
+      throw error;
+    }
 
     auditLogger.record({
       type: 'driver.deleted',

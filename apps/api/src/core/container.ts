@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import {
+  createAssignmentsService,
+  type AssignmentsService,
+} from '../modules/assignments/assignments.service';
 import { createAuthService, type AuthService } from '../modules/auth/auth.service';
 import { createDriversService, type DriversService } from '../modules/drivers/drivers.service';
 import { createHealthService, type HealthService } from '../modules/health/health.service';
@@ -39,6 +43,7 @@ export interface Container {
   organizationsService: OrganizationsService;
   shipsService: ShipsService;
   driversService: DriversService;
+  assignmentsService: AssignmentsService;
   auditLogger: AuditLogger;
 }
 
@@ -72,6 +77,7 @@ export function createContainer(): Container {
 
   const shipsService = createShipsService({ prisma, auditLogger });
   const driversService = createDriversService({ prisma, auditLogger });
+  const assignmentsService = createAssignmentsService({ prisma, auditLogger });
 
   return {
     healthService,
@@ -79,6 +85,7 @@ export function createContainer(): Container {
     organizationsService,
     shipsService,
     driversService,
+    assignmentsService,
     auditLogger,
   };
 }

@@ -170,6 +170,204 @@ describe('driver ship assignment (currentShipId)', () => {
   });
 });
 
+describe('drivers availability — cannot drift from a live confirmed assignment', () => {
+  async function createConfirmedAssignment(app: ReturnType<typeof buildApp>, token: string) {
+    const ship = await request(app)
+      .post('/api/v1/ships')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        shipName: 'MSC Aurora',
+        truckRequirements: [
+          { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+        ],
+      });
+    const truckRequirementId = ship.body.truckRequirements[0].id as string;
+    const driver = await createDriver(app, token);
+    const assignment = await request(app)
+      .post('/api/v1/assignments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ truckRequirementId, driverId: driver.body.id });
+    await request(app)
+      .patch(`/api/v1/assignments/${assignment.body.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`);
+
+    return { driverId: driver.body.id as string, shipId: ship.body.id as string };
+  }
+
+  it('rejects marking a confirmed driver IDLE directly — this is the double-booking exploit path', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const { driverId } = await createConfirmedAssignment(app, owner.accessToken);
+
+    const response = await request(app)
+      .patch(`/api/v1/drivers/${driverId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ availability: 'IDLE' });
+
+    expect(response.status).toBe(409);
+
+    const driverAfter = await request(app)
+      .get(`/api/v1/drivers/${driverId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(driverAfter.body.availability).toBe('CONFIRMED');
+  });
+
+  it('rejects reassigning a confirmed driver to a different ship directly', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const { driverId } = await createConfirmedAssignment(app, owner.accessToken);
+    const otherShip = await request(app)
+      .post('/api/v1/ships')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ shipName: 'Sea Falcon' });
+
+    const response = await request(app)
+      .patch(`/api/v1/drivers/${driverId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ currentShipId: otherShip.body.id });
+
+    expect(response.status).toBe(409);
+  });
+
+  it('allows updating unrelated fields (e.g. notes) on a confirmed driver without touching availability', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const { driverId } = await createConfirmedAssignment(app, owner.accessToken);
+
+    const response = await request(app)
+      .patch(`/api/v1/drivers/${driverId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ notes: 'Requested an early start tomorrow' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.availability).toBe('CONFIRMED');
+    expect(response.body.notes).toBe('Requested an early start tomorrow');
+  });
+
+  it('allows re-sending the same availability/ship the driver is already confirmed on (no-op)', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const { driverId, shipId } = await createConfirmedAssignment(app, owner.accessToken);
+
+    const response = await request(app)
+      .patch(`/api/v1/drivers/${driverId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ availability: 'CONFIRMED', currentShipId: shipId });
+
+    expect(response.status).toBe(200);
+  });
+
+  it('still allows freely changing availability on a driver with no active confirmed assignment', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const driver = await createDriver(app, owner.accessToken);
+
+    const response = await request(app)
+      .patch(`/api/v1/drivers/${driver.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ availability: 'ESCALATED' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.availability).toBe('ESCALATED');
+  });
+
+  it('allows freely changing availability once the confirmed assignment is properly cancelled', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const ship = await request(app)
+      .post('/api/v1/ships')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        shipName: 'MSC Aurora',
+        truckRequirements: [
+          { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+        ],
+      });
+    const truckRequirementId = ship.body.truckRequirements[0].id as string;
+    const driver = await createDriver(app, owner.accessToken);
+    const assignment = await request(app)
+      .post('/api/v1/assignments')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ truckRequirementId, driverId: driver.body.id });
+    await request(app)
+      .patch(`/api/v1/assignments/${assignment.body.id}/confirm`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    await request(app)
+      .patch(`/api/v1/assignments/${assignment.body.id}/cancel`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ reason: 'Driver had a family emergency' });
+
+    const response = await request(app)
+      .patch(`/api/v1/drivers/${driver.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ availability: 'ON_CALL' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.availability).toBe('ON_CALL');
+  });
+});
+
+describe('driver deletion — blocked by assignment history', () => {
+  async function createShipWithRequirement(app: ReturnType<typeof buildApp>, token: string) {
+    const response = await request(app)
+      .post('/api/v1/ships')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        shipName: 'MSC Aurora',
+        truckRequirements: [
+          { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+        ],
+      });
+    return response.body.truckRequirements[0].id as string;
+  }
+
+  it('rejects deleting a driver with an active (PENDING) assignment, with a clean 409', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const truckRequirementId = await createShipWithRequirement(app, owner.accessToken);
+    const driver = await createDriver(app, owner.accessToken);
+    await request(app)
+      .post('/api/v1/assignments')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ truckRequirementId, driverId: driver.body.id });
+
+    const response = await request(app)
+      .delete(`/api/v1/drivers/${driver.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    expect(response.status).toBe(409);
+
+    const driverAfter = await request(app)
+      .get(`/api/v1/drivers/${driver.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(driverAfter.status).toBe(200);
+  });
+
+  it('rejects deleting a driver whose only assignment is already terminal — the FK still blocks it, and this must surface as a clean 409, not the raw 500 it used to', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const truckRequirementId = await createShipWithRequirement(app, owner.accessToken);
+    const driver = await createDriver(app, owner.accessToken);
+    const assignment = await request(app)
+      .post('/api/v1/assignments')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ truckRequirementId, driverId: driver.body.id });
+    await request(app)
+      .patch(`/api/v1/assignments/${assignment.body.id}/withdraw`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    // The proactive active-count check passes (WITHDRAWN isn't active) —
+    // this specifically exercises the P2003 fallback, since the assignment
+    // row itself still exists (it's never deleted, only its status
+    // changes) and the FK still blocks the driver's deletion regardless.
+    const response = await request(app)
+      .delete(`/api/v1/drivers/${driver.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    expect(response.status).toBe(409);
+  });
+});
+
 describe('drivers list — search, filter, sort, pagination', () => {
   it('filters by availability and searches by name/plate/phone', async () => {
     const app = buildApp();

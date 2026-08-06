@@ -29,6 +29,24 @@ export function DashboardPage({
   const upcoming = activeShips.filter((s) => s.eta).slice(0, 5);
   const today = activeShips.filter((s) => isToday(s.eta) || isToday(s.reportingTime));
 
+  // confirmedCount/pendingCount are already computed server-side on every
+  // truck requirement (see ship.schema.ts) — no separate assignments
+  // fetch needed just to answer "what's short-staffed right now."
+  const shortages = activeShips
+    .flatMap((ship) =>
+      ship.truckRequirements
+        .filter((req) => req.confirmedCount < req.quantityNeeded)
+        .map((req) => ({
+          requirementId: req.id,
+          shipName: ship.shipName,
+          destination: req.destination,
+          confirmedCount: req.confirmedCount,
+          quantityNeeded: req.quantityNeeded,
+          pendingCount: req.pendingCount,
+        })),
+    )
+    .slice(0, 6);
+
   const isLoading = shipStatsLoading || driverStatsLoading;
 
   return (
@@ -66,6 +84,35 @@ export function DashboardPage({
       </div>
 
       <div className="mt-5 grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+        <Panel title="Shortages">
+          {shortages.length === 0 && (
+            <p className="text-xs text-[#8B9AA3]">Every active destination is fully staffed.</p>
+          )}
+          <div className="flex flex-col gap-2">
+            {shortages.map((s) => (
+              <div
+                key={s.requirementId}
+                onClick={() => onNavigate('ships')}
+                className="cursor-pointer rounded-lg border border-[#F5EEE0] px-3 py-2 transition hover:bg-[#FBF6EE]"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-[12.5px] font-semibold text-[#0F2A38]">
+                    {s.shipName} · {s.destination}
+                  </span>
+                  <span className="flex-shrink-0 rounded-full bg-[#FDEFD9] px-2 py-0.5 text-[10px] font-semibold text-[#B4762A]">
+                    {s.confirmedCount}/{s.quantityNeeded} confirmed
+                  </span>
+                </div>
+                {s.pendingCount > 0 && (
+                  <div className="mt-0.5 text-[11px] text-[#8B9AA3]">
+                    {s.pendingCount} pending outreach
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </Panel>
+
         <Panel title="Today's operations">
           {today.length === 0 && (
             <p className="text-xs text-[#8B9AA3]">Nothing scheduled to arrive or report today.</p>

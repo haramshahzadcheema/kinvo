@@ -42,6 +42,7 @@ model Organization {
   invitations Invitation[]
   ships       Ship[]
   drivers     Driver[]
+  assignments Assignment[]
 
   @@map("organizations")
 }
@@ -57,9 +58,11 @@ model User {
   updatedAt    DateTime   @updatedAt
   lastLoginAt  DateTime?
 
-  memberships     Membership[]
-  refreshTokens   RefreshToken[]
-  sentInvitations Invitation[]   @relation("InvitationInvitedBy")
+  memberships        Membership[]
+  refreshTokens      RefreshToken[]
+  sentInvitations    Invitation[]        @relation("InvitationInvitedBy")
+  createdAssignments Assignment[]        @relation("AssignmentCreatedBy")
+  recordedAttempts   AssignmentAttempt[] @relation("AssignmentAttemptRecordedBy")
 
   @@map("users")
 }
@@ -189,7 +192,8 @@ model TruckRequirement {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  ship Ship @relation(fields: [shipId], references: [id], onDelete: Cascade)
+  ship        Ship         @relation(fields: [shipId], references: [id], onDelete: Cascade)
+  assignments Assignment[]
 
   @@index([shipId])
   @@map("truck_requirements")
@@ -243,12 +247,155 @@ model Driver {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   currentShip  Ship?        @relation("DriverCurrentShip", fields: [currentShipId], references: [id], onDelete: SetNull)
+  assignments  Assignment[]
 
   @@unique([organizationId, phone])
   @@index([organizationId])
   @@index([organizationId, availability])
   @@index([currentShipId])
   @@map("drivers")
+}
+
+// Phase 3: one row per (driver, truck requirement) engagement — the fact
+// that was missing from Phase 2. Scoped to TruckRequirement, not Ship, for
+// the same reason rate lives there: different destinations/truck types on
+// one ship are independent commercial engagements, and an assignment is
+// fundamentally about one of those, not "the ship" in general.
+//
+// organizationId is denormalized directly onto this model (added after
+// Phase 3 shipped, once the flat cross-ship "call list" view's default
+// query — status=PENDING, no truckRequirementId/driverId — turned out to
+// have no way to reach an org's own rows without walking
+// truckRequirement -> ship for every row in the system. Immutable once
+// set: an Assignment's parent TruckRequirement/Ship never moves to a
+// different organization after creation, so there is nothing for this
+// column to drift from. Tenant-scoped via the Prisma extension exactly
+// like Ship/Driver (see core/prisma.ts's TENANT_SCOPED_MODELS) — set
+// explicitly in assignments.service.ts's createAssignment for the same
+// reason every other tenant-scoped create() does (the extension injects
+// it at runtime, but Prisma's generated create types can't see that).
+//
+// onDelete: Restrict on the truckRequirement/driver FKs (not Cascade) — a
+// Driver or TruckRequirement with live assignment history must never be
+// silently deletable out from under that history; the service layer
+// requires cancelling active assignments first and surfaces a clear error
+// instead of a raw FK-violation 500. onDelete: Cascade on the new
+// organization FK matches Ship/Driver's own relation to Organization —
+// there is no organization-delete flow today, so this is dormant, but
+// keeping it consistent with the rest of the schema avoids a one-off shape
+// if that ever changes.
+//
+// agreedRate is nullable and deliberately has NO paired agreedCurrency
+// column: currency belongs to the commercial contract (the
+// TruckRequirement itself), never to an individual driver's negotiation
+// within it — every driver recruited against the same requirement is
+// quoted in the same currency, only the amount can differ. Null means
+// "use the requirement's posted rate," matching the exact
+// override-with-no-silent-fallback pattern TruckRequirement.rate already
+// established relative to the (now-removed) ship-level rate.
+model Assignment {
+  id                 String           @id @default(cuid())
+  organizationId     String
+  truckRequirementId String
+  driverId           String
+  status             AssignmentStatus @default(PENDING)
+  agreedRate         Decimal?         @db.Decimal(10, 2)
+  invitedAt          DateTime         @default(now())
+  respondedAt        DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?
+  rejectionReason    String?
+  noShowAt           DateTime?
+  completedAt        DateTime?
+  createdByUserId    String
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  organization     Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  truckRequirement TruckRequirement    @relation(fields: [truckRequirementId], references: [id], onDelete: Restrict)
+  driver           Driver              @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  // No onDelete specified, matching Invitation.invitedById's exact shape —
+  // there is no user-delete flow today, so this is dormant either way, but
+  // an assignment's record of who created it is a fact worth restricting
+  // against silent loss, same reasoning as every other "who did this" FK
+  // in this schema.
+  createdByUser    User                @relation("AssignmentCreatedBy", fields: [createdByUserId], references: [id])
+  attempts         AssignmentAttempt[]
+
+  // A driver may have at most one ACTIVE (PENDING or CONFIRMED) engagement
+  // per requirement at a time — re-approaching a driver after an earlier
+  // rejection is a real workflow, so this must be a PARTIAL unique index,
+  // not a full one. Prisma's schema DSL cannot express a partial index;
+  // the actual constraint is hand-added in the migration SQL (see
+  // migration comment). This @@index is the query-shape hint only — the
+  // real uniqueness guarantee lives in the migration, not here.
+  @@index([truckRequirementId, driverId])
+  @@index([truckRequirementId, status])
+  @@index([driverId, status])
+  // The flat "call list" view's default query (status=PENDING, no other
+  // filter) — this is what a plain @@index([status]) alone can't serve:
+  // without organizationId, Postgres has no way to jump straight to one
+  // org's pending rows, only to filter every org's pending rows one by one
+  // via a join back through truckRequirement -> ship. This composite index
+  // is the one that actually matches that access pattern.
+  @@index([organizationId, status])
+  @@map("assignments")
+}
+
+// Append-only contact history against one Assignment — deliberately a
+// separate table rather than counters-on-Assignment, because Phase 4's
+// CALL-E retry logic needs full history (multiple attempts over time),
+// not just a count. This table is also, not incidentally, the exact
+// ledger CALL-E's outbound-call worker will write into instead of a
+// dispatcher clicking a button — see docs/ARCHITECTURE.md's Phase 3
+// Decisions log for the full CALL-E-readiness reasoning.
+//
+// externalCallId is nullable and unpopulated until Phase 4 — reserved now
+// so a provider's call-SID gives webhook-replay idempotency for free the
+// day it's needed, with no migration required at that point.
+model AssignmentAttempt {
+  id               String         @id @default(cuid())
+  assignmentId     String
+  outcome          AttemptOutcome
+  notes            String?
+  externalCallId   String?        @unique
+  recordedByUserId String?
+  attemptedAt      DateTime       @default(now())
+
+  assignment     Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  // SetNull, not Restrict — recordedByUserId is already nullable for the
+  // Phase 4 case of a CALL-E webhook attempt with no human actor at all,
+  // so "we no longer know who recorded this" is an existing, valid state
+  // this field can be in, not a new one this relation introduces.
+  recordedByUser User?      @relation("AssignmentAttemptRecordedBy", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([assignmentId, attemptedAt])
+  @@map("assignment_attempts")
+}
+
+enum AssignmentStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  EXPIRED
+  WITHDRAWN
+  CANCELLED
+  NO_SHOW
+  COMPLETED
+}
+
+// SYSTEM_ERROR is reserved and unused until Phase 4 — lets CALL-E
+// distinguish "the driver was unreachable" from "our own call
+// infrastructure failed" without a migration added under pressure later.
+enum AttemptOutcome {
+  NO_ANSWER
+  BUSY
+  UNREACHABLE
+  WRONG_NUMBER
+  REJECTED
+  CONFIRMED
+  SYSTEM_ERROR
 }
 
 enum Role {
