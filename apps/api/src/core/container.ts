@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { createAuthService, type AuthService } from '../modules/auth/auth.service';
+import { createDriversService, type DriversService } from '../modules/drivers/drivers.service';
 import { createHealthService, type HealthService } from '../modules/health/health.service';
 import {
   createOrganizationsService,
   type OrganizationsService,
 } from '../modules/organizations/organizations.service';
+import { createShipsService, type ShipsService } from '../modules/ships/ships.service';
 import { createAuditLogger, type AuditLogger } from './audit/audit-logger';
 import { logger } from './logger';
 import { checkDatabaseConnection, prisma } from './prisma';
@@ -35,6 +37,8 @@ export interface Container {
   healthService: HealthService;
   authService: AuthService;
   organizationsService: OrganizationsService;
+  shipsService: ShipsService;
+  driversService: DriversService;
   auditLogger: AuditLogger;
 }
 
@@ -66,5 +70,15 @@ export function createContainer(): Container {
     auditLogger,
   });
 
-  return { healthService, authService, organizationsService, auditLogger };
+  const shipsService = createShipsService({ prisma, auditLogger });
+  const driversService = createDriversService({ prisma, auditLogger });
+
+  return {
+    healthService,
+    authService,
+    organizationsService,
+    shipsService,
+    driversService,
+    auditLogger,
+  };
 }

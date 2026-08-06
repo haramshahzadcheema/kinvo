@@ -15,3 +15,20 @@ export function validateBody(schema: ZodType): RequestHandler {
     next();
   };
 }
+
+/** Same as validateBody, for query strings — list endpoints (pagination,
+ * search, filtering, sorting) validate req.query this way rather than each
+ * service re-parsing/defaulting raw string params by hand. Express's
+ * req.query is technically read-only in types but assignable at runtime;
+ * `as never` documents that this is the one sanctioned place doing it. */
+export function validateQuery(schema: ZodType): RequestHandler {
+  return (req, _res, next) => {
+    const result = schema.safeParse(req.query);
+    if (!result.success) {
+      next(result.error);
+      return;
+    }
+    req.query = result.data as never;
+    next();
+  };
+}

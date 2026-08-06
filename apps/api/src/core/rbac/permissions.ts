@@ -17,7 +17,11 @@ export type Action =
   | 'members:manage'
   | 'invitations:read'
   | 'invitations:create'
-  | 'invitations:revoke';
+  | 'invitations:revoke'
+  | 'ships:read'
+  | 'ships:manage'
+  | 'drivers:read'
+  | 'drivers:manage';
 
 const ORGANIZATION_MANAGEMENT_ACTIONS: readonly Action[] = [
   'members:read',
@@ -27,11 +31,24 @@ const ORGANIZATION_MANAGEMENT_ACTIONS: readonly Action[] = [
   'invitations:revoke',
 ];
 
+// Truck/document requirements aren't separately permissioned — they're
+// sub-resources only ever edited as part of a ship record (matching the
+// actual UI, where destinations are fields on the "Add Ship" form, not a
+// standalone screen), so ships:manage covers them.
+const LOGISTICS_ACTIONS: readonly Action[] = [
+  'ships:read',
+  'ships:manage',
+  'drivers:read',
+  'drivers:manage',
+];
+
 const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
-  OWNER: new Set(ORGANIZATION_MANAGEMENT_ACTIONS),
-  ADMIN: new Set(ORGANIZATION_MANAGEMENT_ACTIONS),
-  DISPATCHER: new Set<Action>(['members:read']),
-  VIEWER: new Set<Action>(['members:read']),
+  OWNER: new Set([...ORGANIZATION_MANAGEMENT_ACTIONS, ...LOGISTICS_ACTIONS]),
+  ADMIN: new Set([...ORGANIZATION_MANAGEMENT_ACTIONS, ...LOGISTICS_ACTIONS]),
+  // DISPATCHER is the primary persona for ships/drivers (ARCHITECTURE.md
+  // §7) — full manage access there, but still read-only on org membership.
+  DISPATCHER: new Set<Action>(['members:read', ...LOGISTICS_ACTIONS]),
+  VIEWER: new Set<Action>(['members:read', 'ships:read', 'drivers:read']),
 };
 
 export function hasPermission(role: Role, action: Action): boolean {

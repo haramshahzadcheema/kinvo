@@ -20,4 +20,18 @@ describe('rbac permissions', () => {
       expect(hasPermission(role, 'invitations:revoke')).toBe(false);
     },
   );
+
+  it.each(['OWNER', 'ADMIN', 'DISPATCHER'] as const)('%s can manage ships and drivers', (role) => {
+    expect(hasPermission(role, 'ships:read')).toBe(true);
+    expect(hasPermission(role, 'ships:manage')).toBe(true);
+    expect(hasPermission(role, 'drivers:read')).toBe(true);
+    expect(hasPermission(role, 'drivers:manage')).toBe(true);
+  });
+
+  it('VIEWER can read ships and drivers but cannot manage them', () => {
+    expect(hasPermission('VIEWER', 'ships:read')).toBe(true);
+    expect(hasPermission('VIEWER', 'ships:manage')).toBe(false);
+    expect(hasPermission('VIEWER', 'drivers:read')).toBe(true);
+    expect(hasPermission('VIEWER', 'drivers:manage')).toBe(false);
+  });
 });

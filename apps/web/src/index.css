@@ -1,1 +1,33 @@
 @import 'tailwindcss';
+
+@keyframes tideIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* Every text input/select across the app sets outline-none for a custom
+   border style but never supplied a replacement focus indicator — a
+   keyboard-only user tabbing through a form got zero visual feedback on
+   which field was focused. One global rule fixes it everywhere at once
+   instead of repeating a focus class on every input occurrence. */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #1e7a8c;
+  outline-offset: 1px;
+}

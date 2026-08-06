@@ -7,6 +7,19 @@
 // application logic only ever creates one membership per user. See
 // docs/ARCHITECTURE.md §4 for the tenant-scoping strategy this schema is
 // designed around.
+//
+// Phase 2: the logistics domain — Ship, TruckRequirement,
+// DocumentRequirement, Driver. All four are organization-scoped (directly
+// or, for the two Requirement models, transitively through Ship) and go
+// through the same tenant-scoping Prisma extension as Membership/Invitation
+// — see core/prisma.ts's TENANT_SCOPED_MODELS.
+//
+// Driver.currentShipId is a deliberately simple nullable pointer, not a
+// full assignment entity — Phase 2 explicitly excludes the
+// invite/confirm/reject/cancel assignment workflow (that's Phase 3). This
+// field only answers "which ship is this driver currently on," which the
+// Drivers list needs to render honestly; it carries no state machine of
+// its own.
 
 generator client {
   provider = "prisma-client-js"
@@ -27,6 +40,8 @@ model Organization {
 
   memberships Membership[]
   invitations Invitation[]
+  ships       Ship[]
+  drivers     Driver[]
 
   @@map("organizations")
 }
@@ -110,6 +125,132 @@ model Invitation {
   @@map("invitations")
 }
 
+// Fields match the actual Kinvo UI export (Kinvo.dc.html) — company, berth,
+// gate, cargoType are real fields on the "Add Ship" form and ship cards,
+// not part of the originally-sketched abstract schema in
+// docs/ARCHITECTURE.md §3, which predates a close read of the design
+// export.
+//
+// No rate/rateCurrency here — a ship does not have one price. Real port
+// trucking is priced per destination and truck type (see TruckRequirement
+// below); a ship-level rate was tried in an earlier Phase 2 refinement
+// pass and corrected out per explicit product-owner direction — see
+// docs/ARCHITECTURE.md's Decisions log.
+model Ship {
+  id             String     @id @default(cuid())
+  organizationId String
+  shipName       String
+  company        String?
+  eta            DateTime?
+  reportingTime  DateTime?
+  berth          String?
+  gate           String?
+  cargoType      String?
+  status         ShipStatus @default(DRAFT)
+  notes          String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  truckRequirements    TruckRequirement[]
+  documentRequirements DocumentRequirement[]
+  currentDrivers       Driver[]              @relation("DriverCurrentShip")
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@map("ships")
+}
+
+// One row per (destination, truck type) combination a ship needs — matches
+// the actual mockup's "Destinations — different trucks can go to different
+// places" UI, extended with a truckType field per the product owner's
+// explicit choice to support both dimensions rather than picking one of the
+// two reference sources over the other.
+//
+// rate/rateCurrency live HERE, not on Ship: real port trucking prices per
+// destination and truck type, not per voyage — "Ever Given / Flatbed to
+// Salalah / 35,000 PKR" and "Ever Given / Container to Muscat / 62,000 PKR"
+// are two different prices on the same ship. An earlier refinement pass
+// added a ship-level base rate with per-row overrides; that was corrected
+// out per explicit product-owner direction (the base-rate concept doesn't
+// reflect how these prices actually work) — see the Decisions log. rate is
+// nullable because a requirement can exist before its price is negotiated
+// (no fallback value now that there's no ship-level rate to fall back to);
+// the UI shows "Rate not set" rather than inventing a number.
+model TruckRequirement {
+  id             String   @id @default(cuid())
+  shipId         String
+  destination    String
+  truckType      String
+  quantityNeeded Int
+  rate           Decimal? @db.Decimal(10, 2)
+  rateCurrency   String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  ship Ship @relation(fields: [shipId], references: [id], onDelete: Cascade)
+
+  @@index([shipId])
+  @@map("truck_requirements")
+}
+
+// documentType is a free-text field, not an enum — CNIC/License/Vehicle
+// Registration/Port Entry Pass are example values a dispatcher enters, not
+// a fixed, hardcoded list. No screen for this exists in the original
+// Kinvo.dc.html export; this is new UI built for Phase 2, per the product
+// owner's explicit choice, not a wiring of a pre-existing mock.
+model DocumentRequirement {
+  id           String   @id @default(cuid())
+  shipId       String
+  documentType String
+  isRequired   Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ship Ship @relation(fields: [shipId], references: [id], onDelete: Cascade)
+
+  @@index([shipId])
+  @@map("document_requirements")
+}
+
+// Fields match the actual driver records and detail-drawer in
+// Kinvo.dc.html (name, phone, truck plate/type, license, nationalId,
+// rating, previousJobs, languages, preferredRoutes, preferredCompanies) —
+// richer than the abstract Driver sketch in docs/ARCHITECTURE.md §3.
+// Driver.phone stays organization-scoped per the driver-pool-scope
+// decision in the Decisions log (drivers are not platform identities).
+model Driver {
+  id                 String             @id @default(cuid())
+  organizationId     String
+  fullName           String
+  phone              String
+  licenseNumber      String?
+  nationalId         String?
+  truckPlate         String?
+  truckType          String?
+  capacity           String?
+  languages          String?
+  preferredRoutes    String?
+  preferredCompanies String?
+  rating             Decimal?           @db.Decimal(2, 1)
+  previousJobsCount  Int                @default(0)
+  availability       DriverAvailability @default(IDLE)
+  currentShipId      String?
+  notes              String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  currentShip  Ship?        @relation("DriverCurrentShip", fields: [currentShipId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, phone])
+  @@index([organizationId])
+  @@index([organizationId, availability])
+  @@index([currentShipId])
+  @@map("drivers")
+}
+
 enum Role {
   OWNER
   ADMIN
@@ -137,4 +278,26 @@ enum InvitationStatus {
   ACCEPTED
   EXPIRED
   REVOKED
+}
+
+// DRAFT -> RECRUITING -> CONFIRMED -> IN_PROGRESS -> COMPLETED, with
+// CANCELLED reachable from any pre-COMPLETED state — the state machine is
+// enforced in ships.service.ts, not left implicit (see docs/ARCHITECTURE.md
+// §3's note on why: "who cancelled and why" bugs come from skipping this).
+enum ShipStatus {
+  DRAFT
+  RECRUITING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// Matches the status badges in the actual Kinvo mockup (🟢 Confirmed,
+// 🟡 On call, 🔴 Escalated, ⚪ Idle).
+enum DriverAvailability {
+  IDLE
+  ON_CALL
+  CONFIRMED
+  ESCALATED
 }

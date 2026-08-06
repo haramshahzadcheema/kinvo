@@ -13,8 +13,24 @@ import { getRequestContext } from './request-context';
  * which is exactly the thing Phase 1 chose Membership to avoid. Every
  * model added in future phases that represents organization-owned data
  * (Ship, Driver, Call, ...) belongs on this list the moment it exists.
+ *
+ * Phase 2: Ship and Driver both carry a direct organizationId column, so
+ * both go on this list. TruckRequirement and DocumentRequirement do NOT —
+ * they only carry a shipId, no organizationId of their own, so injecting
+ * `organizationId` into their where clause would be a Prisma validation
+ * error (not a silently-wrong query, at least — it fails loudly), not a
+ * usable scope. Tenant isolation for those two is enforced one layer up,
+ * in ships.service.ts: every operation on a ship's requirements first
+ * resolves the parent Ship through a tenant-scoped `prisma.ship` query,
+ * and only then acts on its requirements via that already-verified ship's
+ * id — a client-supplied shipId is never trusted directly.
  */
-const TENANT_SCOPED_MODELS = new Set<Prisma.ModelName>(['Membership', 'Invitation']);
+const TENANT_SCOPED_MODELS = new Set<Prisma.ModelName>([
+  'Membership',
+  'Invitation',
+  'Ship',
+  'Driver',
+]);
 
 type ScopableArgs = {
   where?: Record<string, unknown>;

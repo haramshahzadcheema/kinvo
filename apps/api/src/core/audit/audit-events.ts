@@ -7,7 +7,14 @@ export type AuditEventType =
   | 'invitation.accepted'
   | 'invitation.revoked'
   | 'membership.role_changed'
-  | 'membership.removed';
+  | 'membership.removed'
+  | 'ship.created'
+  | 'ship.updated'
+  | 'ship.status_changed'
+  | 'ship.deleted'
+  | 'driver.created'
+  | 'driver.updated'
+  | 'driver.deleted';
 
 export interface AuditEvent {
   type: AuditEventType;

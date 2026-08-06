@@ -188,22 +188,22 @@ and "they cannot drift, because there's only one definition."
 Core entities (fields abbreviated to what matters architecturally — full
 column list belongs in the Prisma schema, not this doc):
 
-| Entity                 | Key fields                                                                                                    | Notes                                                    |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `Organization`         | name, plan, createdAt                                                                                         | The tenant. Everything else hangs off this.              |
-| `User`                 | orgId, email, passwordHash, role, phone                                                                       | Role: `OWNER`, `ADMIN`, `DISPATCHER`, `VIEWER`           |
-| `RefreshToken`         | userId, tokenHash, expiresAt, revokedAt, replacedByTokenId                                                    | Enables rotation + reuse detection                       |
-| `Ship`                 | orgId, name, destination, etaAt, reportingTime, rate, rateUnit, status                                        | Status machine, see below                                |
-| `TruckRequirement`     | shipId, truckType, quantityNeeded                                                                             | 1 ship → N requirement rows                              |
-| `DocumentRequirement`  | shipId, documentType, isRequired                                                                              | What must be collected per ship                          |
-| `Driver`               | orgId, name, phone (unique per org), licenseNumber, vehiclePlate, status                                      | Reusable across ships                                    |
-| `ShipDriverAssignment` | shipId, driverId, status, invitedAt, respondedAt, cancellationReason                                          | The join entity — one row per driver-per-ship engagement |
-| `AssignmentDocument`   | assignmentId, documentRequirementId, fileUrl, verifiedStatus                                                  | Ship-specific doc submissions                            |
-| `Call`                 | orgId, direction, providerCallId, assignmentId?, driverId?, status, recordingUrl, transcript, durationSeconds | One row per CALL-E call, inbound or outbound             |
-| `YellowZoneItem`       | orgId, callId, shipId?, driverId?, reason, priority, status, assignedToUserId, resolutionNotes                | The escalation queue                                     |
-| `ReminderCampaign`     | shipId, scheduledAt, status, approvedByUserId, approvedAt                                                     | Approval gate before pre-arrival calls fire              |
-| `Notification`         | orgId, userId, type, payload(json), readAt                                                                    | In-app + drives websocket push                           |
-| `AuditLog`             | orgId, actorUserId, action, entityType, entityId, metadata(json)                                              | Immutable, append-only                                   |
+| Entity                 | Key fields                                                                                                                                                                                                         | Notes                                                                                                                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Organization`         | name, plan, createdAt                                                                                                                                                                                              | The tenant. Everything else hangs off this.                                                                                                                                                     |
+| `User`                 | orgId, email, passwordHash, role, phone                                                                                                                                                                            | Role: `OWNER`, `ADMIN`, `DISPATCHER`, `VIEWER`                                                                                                                                                  |
+| `RefreshToken`         | userId, tokenHash, expiresAt, revokedAt, replacedByTokenId                                                                                                                                                         | Enables rotation + reuse detection                                                                                                                                                              |
+| `Ship`                 | orgId, shipName, company, eta, reportingTime, berth, gate, cargoType, status, notes                                                                                                                                | Status machine, see below. Field set finalized against the Kinvo.dc.html UI export in Phase 2 — see Decisions log. **No rate field** — a ship does not have one price, see below                |
+| `TruckRequirement`     | shipId, destination, truckType, quantityNeeded, rate, rateCurrency, notes                                                                                                                                          | 1 ship → N rows; **destination and rate are both per-row**, not per-ship — real port trucking prices per destination/truck type, not per voyage — see the Phase 2 product-polish decision below |
+| `DocumentRequirement`  | shipId, documentType, isRequired                                                                                                                                                                                   | What must be collected per ship — new UI screen, no prototype reference existed (see Decisions log)                                                                                             |
+| `Driver`               | orgId, fullName, phone (unique per org), licenseNumber, nationalId, truckPlate, truckType, capacity, languages, preferredRoutes, preferredCompanies, rating, previousJobsCount, availability, currentShipId, notes | Reusable across ships. `currentShipId` is a nullable FK for future assignment display, not user-editable in Phase 2 (assignments are Phase 3 scope)                                             |
+| `ShipDriverAssignment` | shipId, driverId, status, invitedAt, respondedAt, cancellationReason                                                                                                                                               | The join entity — one row per driver-per-ship engagement                                                                                                                                        |
+| `AssignmentDocument`   | assignmentId, documentRequirementId, fileUrl, verifiedStatus                                                                                                                                                       | Ship-specific doc submissions                                                                                                                                                                   |
+| `Call`                 | orgId, direction, providerCallId, assignmentId?, driverId?, status, recordingUrl, transcript, durationSeconds                                                                                                      | One row per CALL-E call, inbound or outbound                                                                                                                                                    |
+| `YellowZoneItem`       | orgId, callId, shipId?, driverId?, reason, priority, status, assignedToUserId, resolutionNotes                                                                                                                     | The escalation queue                                                                                                                                                                            |
+| `ReminderCampaign`     | shipId, scheduledAt, status, approvedByUserId, approvedAt                                                                                                                                                          | Approval gate before pre-arrival calls fire                                                                                                                                                     |
+| `Notification`         | orgId, userId, type, payload(json), readAt                                                                                                                                                                         | In-app + drives websocket push                                                                                                                                                                  |
+| `AuditLog`             | orgId, actorUserId, action, entityType, entityId, metadata(json)                                                                                                                                                   | Immutable, append-only                                                                                                                                                                          |
 
 **Relationships**
 
@@ -251,9 +251,10 @@ widened from a narrow tenant-context into a full **Current Context** object
 (`runWithRequestContext` / `getRequestContext`). The `authenticate`
 middleware populates it once per request from the verified JWT; the Prisma
 extension's `$allOperations` hook consumes it on every operation against a
-model in `TENANT_SCOPED_MODELS` (currently `Membership`, `Invitation` — every
-model added in a future phase that holds organization-owned data belongs on
-that list the moment it exists). `test/integration/tenant-isolation.test.ts`
+model in `TENANT_SCOPED_MODELS` (currently `Membership`, `Invitation`,
+`Ship`, `Driver` — every model added in a future phase that holds
+organization-owned data belongs on that list the moment it exists).
+`test/integration/tenant-isolation.test.ts`
 proves the guarantee end-to-end: an authenticated request for Organization A
 cannot see or mutate Organization B's rows, even via list endpoints that
 pass no `where` clause at all — an earlier version of the extension only
@@ -273,6 +274,26 @@ Every call site supplies a `reason` and logs at `warn` — this must stay
 rare, and any new call site outside auth/registration/invitation-acceptance
 is a sign the operation should be redesigned to run inside a bound request
 context instead.
+
+**Sub-resources with no direct `organizationId` column (added Phase 2).**
+`TruckRequirement` and `DocumentRequirement` belong to a `Ship`, not directly
+to an `Organization` — they have no `organizationId` column of their own, so
+they cannot be added to `TENANT_SCOPED_MODELS` (the extension's merge logic
+needs that column to exist on the model). Adding a denormalized
+`organizationId` to these tables purely to reuse the extension was
+considered and rejected: it would duplicate a fact already derivable from
+`shipId`, and create a way for the denormalized copy to drift from the
+real owner if a ship were ever reparented. Instead, `ships.service.ts`
+resolves and verifies the parent `Ship` through the tenant-scoped Prisma
+client _first_, on every sub-resource operation, before touching the
+sub-resource row — `resolveOwnedShip()` does this once and every
+truck/document-requirement function starts from its result rather than
+trusting a client-supplied `shipId` directly. A sub-resource ID that
+belongs to a different ship, or to a ship owned by a different
+organization, produces the identical 404 as one that doesn't exist at
+all — same "invisible, not forbidden" principle as the rest of this
+codebase's error handling, verified by
+`test/integration/ships.test.ts`'s cross-tenant and cross-ship checks.
 
 ---
 
@@ -297,15 +318,29 @@ POST   /api/v1/organizations/invitations
 GET    /api/v1/organizations/invitations
 DELETE /api/v1/organizations/invitations/:invitationId
 
-GET    /api/v1/ships                 ?status=&page=
+GET    /api/v1/ships                 ?search=&status=&page=&pageSize=&sortBy=&sortOrder=
 POST   /api/v1/ships
-GET    /api/v1/ships/:id
-PATCH  /api/v1/ships/:id
-POST   /api/v1/ships/:id/recruit     # triggers outbound call fan-out job
+GET    /api/v1/ships/:shipId
+PATCH  /api/v1/ships/:shipId
+DELETE /api/v1/ships/:shipId
+PATCH  /api/v1/ships/:shipId/status   # explicit state-machine transition, Phase 2
+POST   /api/v1/ships/:id/recruit      # triggers outbound call fan-out job, Phase 4
 
-GET    /api/v1/drivers               ?search=&status=
+GET    /api/v1/ships/:shipId/truck-requirements
+POST   /api/v1/ships/:shipId/truck-requirements
+PATCH  /api/v1/ships/:shipId/truck-requirements/:truckRequirementId
+DELETE /api/v1/ships/:shipId/truck-requirements/:truckRequirementId
+
+GET    /api/v1/ships/:shipId/document-requirements
+POST   /api/v1/ships/:shipId/document-requirements
+PATCH  /api/v1/ships/:shipId/document-requirements/:documentRequirementId
+DELETE /api/v1/ships/:shipId/document-requirements/:documentRequirementId
+
+GET    /api/v1/drivers               ?search=&availability=&page=&pageSize=&sortBy=&sortOrder=
 POST   /api/v1/drivers
-PATCH  /api/v1/drivers/:id
+GET    /api/v1/drivers/:driverId
+PATCH  /api/v1/drivers/:driverId
+DELETE /api/v1/drivers/:driverId
 
 GET    /api/v1/ships/:id/assignments
 PATCH  /api/v1/assignments/:id       # manual override by manager
@@ -679,11 +714,28 @@ by a real database, issuing tokens that scope every subsequent request to
 the right organization — and an integration test suite that proves it,
 not just asserts it.
 
-**Phase 2 — Ship & Driver Management**
-Full schema for `Ship`, `TruckRequirement`, `DocumentRequirement`, `Driver`;
-CRUD endpoints; wire the existing prototype's ship-creation and driver-list
-screens to real data via TanStack Query. _Ends with_: a manager can create a
-ship with requirements and see a real driver roster, fully persisted.
+**Phase 2 — Ship & Driver Management** (implemented)
+Full schema for `Ship`, `TruckRequirement`, `DocumentRequirement`, `Driver`
+
+- migration; production CRUD for all four (filtering, search, sort,
+  pagination, RBAC-enforced, tenant-isolated per §4's sub-resource pattern);
+  explicit `Ship` status-transition endpoint enforcing the state machine from
+  §4 in the service layer; existing prototype's ship and driver screens
+  rewired to real data via TanStack Query, replacing every mock — includes a
+  new `AuthScreen` (sign-up/sign-in) since Phase 1 shipped no frontend auth
+  UI, and an in-memory (not `localStorage`) access-token store with
+  silent-refresh-on-mount session recovery. Strictly scoped per the product
+  owner's explicit instruction: no assignments, notifications, Yellow Zone,
+  reminder campaigns, scheduling, or CALL-E integration — those remain
+  Phase 3+. Proven via `test/integration/ships.test.ts` and `drivers.test.ts`
+  (34 tests: CRUD, validation, RBAC, tenant isolation, status transitions,
+  search/filter/sort/pagination, concurrency) plus a live walkthrough against
+  the running Docker stack (create ship with a truck requirement → add a
+  document requirement → transition status → create/update/delete a driver).
+  See the Decisions log for the TruckRequirement shape, DocumentRequirement
+  UI, and Ship/Driver field-set decisions made during this phase. _Ends
+  with_: a manager can create a ship with requirements and see a real driver
+  roster, fully persisted.
 
 **Phase 3 — Assignments & Manual Workflow**
 `ShipDriverAssignment`, `AssignmentDocument`; invite/confirm/reject/cancel
@@ -908,3 +960,460 @@ system-package dependency an engine/native-binary dependency needs —
 don't scatter ad hoc `apk add` calls across stages if another one becomes
 necessary; consolidate in `base` (and mirror in `runtime` only because it
 deliberately doesn't inherit from `base`).
+
+**`Ship`/`Driver` field set follows the Kinvo.dc.html prototype export, not
+this document's original abstract sketch (resolved 2026-08-05, Phase 2).**
+§3's original table listed a minimal, illustrative field set (`name`,
+`destination`, `etaAt`, ... for `Ship`; `name`, `phone`, `licenseNumber`,
+`vehiclePlate` for `Driver`) written before any real UI existed to bind
+against. Phase 2 implementation instead read the actual static-HTML
+prototype export (`Kinvo.dc.html`, a no-code design-tool export using
+`{{ }}`/`<sc-if>`/`<sc-for>` binding syntax — reference only, never
+executed) field-by-field, since that document is what the product owner
+actually approved as the UI, and building a schema the real screens can't
+populate would be exactly the "looks done, isn't" gap this project's
+discipline rules out. The result: `Ship` gained `company`, `berth`, `gate`,
+`cargoType`, `rateCurrency`; `Driver` gained `nationalId`, `capacity`,
+`languages`, `preferredRoutes`, `preferredCompanies`, `rating`,
+`previousJobsCount`. §3's table above now reflects the real, implemented
+field set — treat it as authoritative over this note going forward.
+
+**`TruckRequirement` shape — destination lives on the requirement row, not
+the ship (resolved 2026-08-05, Phase 2, per explicit product-owner
+choice).** Three sources disagreed on where "destination" belongs: this
+document's abstract sketch put it on `Ship` (one destination per ship);
+the product owner's Phase 2 prompt's example ("5 Flatbeds, 2 Containers, 4
+Dump Trucks") implied one destination per ship with multiple truck-type
+rows; the actual Kinvo.dc.html export showed multiple destination rows per
+ship, each independently needing a truck type and quantity. Rather than
+guess, this was surfaced to the product owner directly before writing any
+schema code; the explicit answer was **"both — destination AND truck type
+per row"** — i.e. `TruckRequirement` carries `(shipId, destination,
+truckType, quantityNeeded)` as one row per destination-per-truck-type
+combination, not a separate `ShipDestination` join entity. This is the
+hybrid shape now in `schema.prisma` and reflected in §3's table.
+
+**`DocumentRequirement` gets a new UI screen — no prototype reference
+existed for it (resolved 2026-08-05, Phase 2, per explicit product-owner
+choice).** Unlike `TruckRequirement`, the Kinvo.dc.html export had no
+document-requirements UI to match against — the product owner's Phase 2
+prompt introduced the concept (`CNIC, License, Vehicle Registration, Port
+Entry Pass`) without a corresponding screen in the static export. Surfaced
+as a second question alongside the TruckRequirement one rather than
+inventing a UI unilaterally; the explicit answer was **"design a new UI
+screen for it."** The result is the "Document requirements" section inside
+`ShipDetailDrawer.tsx` (`apps/web/src/features/ships/ShipDetailDrawer.tsx`)
+— add/remove a free-text `documentType` per ship, `isRequired` defaulting
+to `true`, no hardcoded document-type list per the product owner's
+"do not hardcode, store them relationally" instruction.
+
+**Sub-resources without a direct `organizationId` cannot join
+`TENANT_SCOPED_MODELS` — resolved via parent-first resolution instead
+(resolved 2026-08-05, Phase 2).** See §4's "Sub-resources with no direct
+`organizationId` column" note above for the mechanism
+(`resolveOwnedShip()` / `resolveOwnedTruckRequirement()` /
+`resolveOwnedDocumentRequirement()` in `ships.service.ts`). Recorded here
+because it's a pattern every future ship-scoped or driver-scoped
+sub-resource (e.g. `AssignmentDocument` in Phase 3) should follow, not a
+one-off: resolve and tenant-check the parent through the extension first,
+never add a denormalized `organizationId` purely to reuse the extension
+on a child table.
+
+**Proactive fix: `Driver.phone` unique-constraint race handled from day
+one, not discovered via chaos testing (resolved 2026-08-05, Phase 2).**
+Phase 1's chaos-testing round (see the refresh-token and invitation-
+acceptance races above) established that any `@@unique` constraint reached
+by concurrent requests needs its Postgres `P2002` error translated to a
+clean `409 Conflict`, not left to surface as a raw Prisma error or a
+generic 500. Rather than wait to rediscover this the same way for
+`Driver.phone` (which is `@@unique([organizationId, phone])`), the Phase 2
+implementation applies the lesson proactively:
+`translatePhoneConflict()` in `drivers.service.ts` catches `P2002` on
+create/update and maps it to `ConflictError` before it reaches the client.
+Covered by a concurrency test in `test/integration/drivers.test.ts`
+("under concurrent creates with the same phone, exactly one succeeds and
+no request 500s") mirroring the equivalent Phase 1 tests.
+
+---
+
+## Phase 2 refinement pass
+
+After Phase 2's initial Definition of Done was met (schema, CRUD, tests,
+live verification — see the Milestones entry above), a second pass
+reviewed the shipped feature set against the actual operating reality of a
+port-logistics dispatcher, not just its own stated requirements. Changes
+from this pass are additive, non-breaking, and each justified against one
+test: does it reduce phone-call volume or a real operational error, for a
+dispatcher using this today — not a hypothetical future phase. Entries
+below are added as each refinement lands; this is a working log, not a
+one-time summary.
+
+**Per-truck-type rate on `TruckRequirement` (resolved 2026-08-05).**
+`Ship.rate`/`Ship.rateCurrency` (added in Phase 2's initial pass) is a
+single flat number for an entire voyage. In real port operations,
+different destinations and different truck types command different
+fares on the same voyage — "what's the fare for a Flatbed to Salalah" is
+one of the exact recurring dispatcher phone questions this product exists
+to eliminate, and the original schema could not answer it per
+destination/truck-type, only per ship. `TruckRequirement.rate` (nullable
+`Decimal(10,2)`) was added as a per-row override: `Ship.rate` remains the
+voyage's base/display rate, and a requirement with no override falls back
+to it. Currency is **not** duplicated onto `TruckRequirement` — a single
+voyage is quoted in one currency (`Ship.rateCurrency`), never split
+per-row, so a per-row currency field would add complexity with no real
+business referent.
+
+This is additive and backward-compatible: existing ships created before
+this change keep displaying their ship-level rate exactly as before (every
+requirement's `rate` is `null`, so the UI falls back to `Ship.rate` for
+all of them); nothing about the original Phase 2 contract is broken.
+Migration: `20260805120349_truck_requirement_rate`. Frontend
+(`ShipsPage.tsx`'s create-ship destination rows, `ShipDetailDrawer.tsx`'s
+truck-requirement list and add-row) shows the effective rate per row —
+the override when set, `Ship.rate` labeled "(base rate)" when not — so a
+dispatcher glancing at a ship's requirement list always sees a real number
+per row, never a blank they have to go look up elsewhere. Covered by
+`test/integration/ships.test.ts` (override rate persists distinctly from
+the ship's base rate; a requirement with no override returns `rate: null`
+from the API, with the base-rate fallback being a display concern handled
+in the frontend, not duplicated server-side data). Verified live against
+the running Docker stack: a ship with one overridden requirement (25000)
+and one non-overridden requirement correctly displayed the base rate
+(20000) with the "(base rate)" label only on the fallback row.
+
+**Ship search now matches truck-requirement destinations, not just
+shipName/company (resolved 2026-08-05).** `listShips`'s search only
+queried `shipName`/`company` — confirmed by reading the code before
+changing it. A dispatcher's most common lookup ("who's got trucks going to
+Salalah?") was unanswerable by search, since destination lives on
+`TruckRequirement`, a separate table, not on `Ship` itself. Added a third
+`OR` clause using Prisma's relation filter —
+`truckRequirements: { some: { destination: { contains, mode: insensitive } } }`
+— alongside the existing two. No schema change; the query stays inside
+`Ship`'s existing tenant-scoped `where`, so no new tenant-isolation
+surface was introduced. Frontend search placeholder updated to "Search
+ship, company, or destination" so the capability is discoverable, not
+hidden. Covered by a new test in `test/integration/ships.test.ts`
+("searches by a truck requirement destination, not just ship
+name/company") and verified live: searching "Islamabad" and
+case-insensitive "lahore" (both destinations on truck requirements, not
+in the ship's name or company) correctly returned the ship; a term
+matching nothing ("Peshawar") correctly returned an empty list, proving
+the filter is selective, not a no-op.
+
+## Phase 2 product-polish pass
+
+A further pass on top of the refinement pass above, focused on making
+Phase 2 feel like dispatcher software rather than generated CRUD, and on
+correcting a modeling mistake identified during review. Same rule as
+every other entry in this log: every change here is justified against
+whether it reduces a dispatcher's phone-call volume or click count, not
+decoration for its own sake.
+
+**`Ship.rate`/`Ship.rateCurrency` deleted; rate now lives entirely on
+`TruckRequirement` (resolved 2026-08-05).** The per-requirement rate
+added in the prior refinement pass (immediately above) kept a ship-level
+`rate` as a "base rate" that per-row rates could override or fall back
+to. On review this was wrong, not just imperfect: a ship does not have
+one price. A single voyage recruiting Flatbeds to one destination and
+Container Chassis to another is quoted two different real fares — there
+is no meaningful "base" to fall back to, and displaying one invited
+exactly the kind of dispatcher confusion ("is that the real price or a
+placeholder?") this product exists to eliminate. Fix: `Ship.rate` and
+`Ship.rateCurrency` are deleted outright; `TruckRequirement` gains
+`rateCurrency` (previously only had `rate`) and `notes` (free text, e.g.
+"High priority" — a dispatcher's per-requirement remark, not a new
+workflow concept). A requirement with no rate set displays "Rate not
+set" — an honest gap, not an invented number. Migration
+`20260805131408_truck_requirement_currency_notes_ship_rate_removed`
+(hand-authored via `prisma migrate diff` and applied with `migrate
+deploy`, since `migrate dev` refuses to run non-interactively against a
+migration that drops a populated column — dropped one pre-existing test
+ship's rate value in the dev database, which is disposable seed data,
+not a concern in a schema that's still inside its first working day).
+Currency is still not duplicated per destination-and-truck-type-and-row
+in a way that would let one voyage mix currencies — `rateCurrency` lives
+once per requirement (not shared across a ship) because that is the
+actual unit rate is quoted at; the UI currently always writes `'PKR'`
+when a rate is set (real product for Pakistani port companies), leaving
+the field itself general enough to support other currencies later
+without another migration. Verified live: a ship with one requirement
+priced at 80,000 and no ship-level rate anywhere in the payload; a
+requirement with no rate correctly shows "Rate not set" instead of a
+fallback number (confirmed via `test/integration/ships.test.ts` and a
+live walkthrough against the running stack).
+
+**Ship creation redesigned as destination cards, not table rows (resolved
+2026-08-05).** `ShipsPage.tsx`'s "Add Ship" form previously modeled each
+truck requirement as one row in a cramped `grid-cols-[2fr_1fr_1fr_auto]`
+layout — a pattern that stopped scaling the moment `rate` and `notes`
+were added (five-plus fields in one horizontal row reads like a
+spreadsheet, not a form). Each destination is now its own bordered card
+(`Destination N` header, Destination/Truck Type/Quantity/Rate/Notes,
+delete button), matching the shape of an actual real-world requirement a
+dispatcher is entering one at a time. `Ship information` also gained ETA
+and Reporting Time (`datetime-local`) inputs — both fields already
+existed in the schema since Phase 2's first pass but were never exposed
+in the create form, an oversight this pass corrects since they answer
+two more of the phone questions this product is meant to eliminate
+("when should I report?").
+
+**Dashboard quick-stats on both Ships and Drivers screens (resolved
+2026-08-05).** A dispatcher opening Kinvo should see operational status
+before doing anything else — "how many ships are recruiting," "how many
+drivers are idle right now" — not just an empty list waiting for a
+search. `useShipStats`/`useDriverStats`
+(`apps/web/src/features/{ships,drivers}/useShips.ts`,`useDrivers.ts`)
+each fire four parallel count-only queries through the _existing_
+tenant-scoped/RBAC'd list endpoint (`pageSize: 1`, only `.total` is
+read) — Ships: Recruiting/Confirmed/In Progress/Completed; Drivers:
+Idle/On Call/Confirmed/Escalated (the driver stats double as clickable
+availability filters, replacing the old static color-key legend with
+live counts). No new backend endpoint: four cheap, indexed `COUNT`
+queries reusing infrastructure that already existed, not a dedicated
+aggregate route built speculatively ahead of proven need. Deliberately
+not implemented: "Completed Today" (would need date-range filtering the
+API doesn't have yet) — shown as a plain "Completed" total instead of
+faking a "today" scope that isn't real.
+
+**Driver list gains a `truckType` filter (resolved 2026-08-05).**
+`truckType` was stored and displayed on every driver but not filterable
+— confirmed by reading `drivers.service.ts` before changing it. "Which
+idle Flatbeds do I have?" was a daily dispatcher question with no way to
+ask it through the UI. Added `truckType` to `driverListQuerySchema` and
+an `equals`/insensitive `where` clause in `listDrivers` (a driver's truck
+type is one specific value, not free-text search, so `equals` is correct
+where the ship-destination search earlier used `contains`). Frontend
+filter input added alongside the existing search box, with a "Clear
+filters" affordance once any filter is active.
+
+**Responsive pass across ships, drivers, and the app shell (resolved
+2026-08-05).** Every screen touched in this pass was rebuilt with mobile
+in mind rather than retrofitted:
+
+- App shell (`App.tsx`): header wraps instead of overflowing on narrow
+  screens; the organization name and "name · role" text hide below the
+  `sm` breakpoint (secondary information, not needed to operate the
+  app one-handed); main content padding scales down on mobile.
+- Ships/Drivers grids and stat strips: `grid-cols-1` on mobile up to
+  `grid-cols-3`/`grid-cols-4` on desktop via Tailwind breakpoints, never
+  a fixed column count that forces horizontal scroll.
+- Driver table: renders as an actual `<table>`-like grid on `sm:` and
+  above, and as stacked cards below it (`sm:hidden` / `hidden sm:block`
+  pair) — a data table genuinely doesn't work at 375px width, so this is
+  two purpose-built layouts sharing one data source, not one layout
+  squeezed to fit.
+- Both detail drawers (`ShipDetailDrawer.tsx`, `DriverDetailDrawer.tsx`):
+  full-screen (`h-full w-full`, no rounded corners/backdrop margin) below
+  `sm:`, the original centered modal card above it — matches how every
+  native mobile app handles a detail view, and avoids a modal-inside-a-
+  scrollbar situation on a small viewport.
+- `AuthScreen.tsx` needed no changes — already `max-w-sm` with `px-4` on
+  its outer container from Phase 2's first pass, confirmed by reading it
+  before deciding not to touch it.
+
+Verified via `resize_window` at the `mobile` (375×812) and `desktop`
+presets against the running stack: create-ship, open-drawer, add-driver,
+and the driver-table/card layout switch were all exercised at both
+sizes with no horizontal scroll and no non-functional controls.
+Deliberately **not** built: a hamburger menu. There are two navigation
+items (Ships, Drivers); a collapsible menu for two items is exactly the
+kind of default developer-habit chrome this pass was told to remove, not
+add — the existing pill-button nav already wraps cleanly at 375px.
+
+**Loading skeletons and richer empty states (resolved 2026-08-05).**
+Both list screens previously rendered a bare "Loading ships…" /
+"Loading…" text string, and empty states were a single line of gray
+text ("No ships yet — create one to get started."). Replaced with
+shape-matching skeleton blocks (`animate-pulse` over card/row-shaped
+`div`s, `ShipListSkeleton`/`DriverListSkeleton`/`DrawerSkeleton`/
+`DriverDrawerSkeleton`) so the layout doesn't jump between the loading
+and loaded states, and with a heading + explanatory line + primary CTA
+button for empty states (distinguishing "no data at all" from "no
+results for your current filters," which need different messages and
+different — or absent — CTAs).
+
+**Explicitly deferred, and why.** Full WCAG accessibility audit: native
+`<button>`/`<input>` elements with visible labels already cover the
+common cases; a systematic pass (focus-trap in drawers, full ARIA
+labeling, contrast audit) is real work that deserves its own scoped
+pass, not a rushed addendum to this one. List virtualization: every list
+in this product today is a handful of rows; virtualizing them would be
+optimizing a problem that doesn't exist yet, the same YAGNI reasoning
+this document has applied consistently since Phase 0. A `licenseExpiry`
+field and driver `isActive` soft-deactivation (compliance and roster-
+hygiene gaps identified during the review that produced this list) were
+not built in this pass — real, justified, but scoped out to keep this
+change reviewable; next candidates for a future iteration, not
+forgotten.
+
+## Phase 2 navigation and dashboard pass
+
+Follows a self-critique against the same "developer-built CRUD, not
+premium dispatch software" bar — see the review conducted before this
+pass started. Every item below traces to a specific finding in that
+review, not a stylistic preference.
+
+**Ship drawer redesigned: destination cards with a real ship-information
+panel (resolved 2026-08-05).** The single worst screen identified by the
+review — truck requirements rendered as one run-on text line
+(`Lahore — 5x Flatbed · 25000 PKR`). `ShipDetailDrawer.tsx` now opens
+with an information grid (Cargo/Berth/Gate/ETA/Reporting time, `—` for
+unset fields) and renders each destination as its own card (destination
+name, truck type/quantity subline, rate prominently in the ship's teal
+accent, notes as a separate quoted block). Explicitly **not** added:
+Confirmed/Remaining counts per destination — that requires knowing which
+drivers are assigned to which requirement, i.e. the `ShipDriverAssignment`
+model, which is Phase 3. Faking it with placeholder zeros was considered
+and rejected — it would violate the no-placeholder discipline this
+project has held since Phase 0 for the sake of matching a UI mockup.
+
+**Ships list now surfaces ETA and an "arriving soon" signal (resolved
+2026-08-05).** The review's other Critical finding: ETA existed in the
+schema and the create form but was invisible on every ship card, making
+"what's arriving soonest" — the first question a dispatcher asks —
+unanswerable without opening every card. `formatDateTime`/`isWithinHours`
+(`apps/web/src/lib/format.ts`, shared with the dashboard) now drive an
+ETA line on each card and an amber "Arriving soon" badge + accent border
+when a non-completed/cancelled ship's ETA falls within 48 hours.
+
+**Ships page gains filter chips and a sort control, matching the Drivers
+page pattern (resolved 2026-08-05).** The review flagged a real
+inconsistency: Drivers' stat chips were clickable filters, Ships' were
+purely decorative — the same interaction taught on one screen silently
+stopped working on the next. Ships' four stat cards (Recruiting/
+Confirmed/In Progress/Completed) are now toggleable filters wired into
+`listShips`'s existing `status` query param, plus a sort `<select>`
+(ETA soonest / Newest / Name / Status) using the `sortBy`/`sortOrder`
+params the API already supported but no UI exposed.
+
+**`updatedAt` added as a sortable field on both list endpoints (resolved
+2026-08-05).** Minimal, additive: one more enum value on
+`shipListQuerySchema`/`driverListQuerySchema`'s `sortBy`, no service code
+change needed since both services already do
+`orderBy: { [query.sortBy]: query.sortOrder }` generically. Added
+specifically to support the dashboard's "Recently updated" panel.
+
+**Real navigation shell: sidebar (desktop) + slide-out drawer (mobile)
+(resolved 2026-08-05).** Two pill buttons in a header bar is a tab
+switcher, not navigation — the review's other High-priority finding.
+`App.tsx`'s `Shell` now renders a collapsible left sidebar on `md:` and
+above (Dashboard/Ships/Drivers live; Assignments/Calls/Notifications/
+Settings rendered disabled with a "Soon" badge — honest about what
+doesn't exist yet, not hidden) and a slide-out drawer below `md:`
+(hamburger trigger, backdrop click **and** Escape key both close it,
+current page highlighted). Icons are a small hand-rolled inline-SVG set
+(`components/icons.tsx`) — no icon library dependency for seven glyphs.
+Verified live at the `mobile` (375×812) preset: drawer opens, highlights
+the active page, navigates and auto-closes on selection.
+
+**Dashboard is now its own landing view, not the Ships list with stats
+bolted on (resolved 2026-08-05).** `features/dashboard/DashboardPage.tsx`
+is the default tab. Panels: operational stat strip (Recruiting/In
+Progress ship counts, Idle/On Call driver counts), "Today's operations"
+(ships whose ETA or reporting time falls on the current calendar date),
+"Upcoming ETAs" (next 5 active ships by ETA ascending), "Recently
+updated" (last 3 ships + last 3 drivers by `updatedAt` descending), and
+"Quick actions" (Create Ship / Add Driver, which navigate to the target
+page **and** auto-open its create form in one click — see below). All
+data comes from the existing list endpoints with small `pageSize`
+values; no dedicated dashboard/aggregate API route, same reasoning as
+`useShipStats`/`useDriverStats`.
+
+_Honesty note on "Recently updated":_ this reads real `updatedAt`
+timestamps — it is not a fabricated feed — but it cannot say _what_
+changed on a ship or driver, only _that_ something did and _when_. A
+true activity feed needs the `AuditLog` table, which Phase 1 explicitly
+deferred (see "Phase 1 scope" above). Labeled and scoped accordingly
+rather than presented as more than it is.
+
+**Quick Actions deep-link into a create form, not just the page (resolved
+2026-08-05).** A first pass would have made Dashboard → Ships → "+ Add
+Ship" a 3-step path to create a ship, one step worse than the old
+Ships-as-landing-page flow. `Shell` lifts one-shot `shipAutoOpen`/
+`driverAutoOpen` flags: a Quick Action sets the target tab and the
+matching flag; `ShipsPage`/`DriversPage` read it only as their
+`useState` **initial** value (`showAddShip/showAddDriver`), and `Shell`
+resets the flag via a `useEffect` immediately after the render that used
+it — so a later manual tab switch back to the same page never
+re-triggers the form. Verified live: "+ Create ship operation" on the
+dashboard opens Ships with the create form already visible, one click.
+
+**Explicitly deferred from this pass, and why:** a true activity feed
+(needs `AuditLog`, Phase 1 decision); Confirmed/Remaining per destination
+and any shortage indicator (needs `ShipDriverAssignment`, Phase 3);
+`licenseExpiry`/driver `isActive` (carried over from the prior pass,
+still real, still scoped out to keep changes reviewable).
+
+## Phase 2 final review pass
+
+A self-critical pass treating the existing implementation as another
+team's work to audit, not code to defend. Four real, verifiable defects
+were found and fixed; each is recorded with how it was found, not just
+what changed, since the finding method matters more than the fix here.
+
+**`Ship.notes` and `Driver.notes` existed in the schema and API with zero
+UI exposure (resolved 2026-08-05).** Found by grep, not inspection —
+searching both create forms for `notes` turned up only per-destination
+truck-requirement notes; the ship-level and driver-level `notes` columns
+(present since the very first Phase 2 schema) were never rendered or
+settable anywhere in the frontend. A dispatcher could not record "customs
+hold pending" on a ship or "prefers night shift" on a driver despite the
+backend fully supporting it. Fixed by adding a Notes field to the ship
+create form and to both entities' new edit forms (below); verified live
+that a note written in the ship edit form persists and displays.
+
+**Neither Ship nor Driver had any way to correct details after creation
+(resolved 2026-08-05) — the most severe finding of this pass.** The
+`updateShip`/`updateDriver` endpoints existed and were tested since
+Phase 2's first pass, but no frontend affordance ever called them for
+anything beyond status/availability transitions. A dispatcher who
+mistyped a berth number or a driver's phone digit had no path to fix it
+short of deleting and recreating the record — for a ship, that also
+destroys its destinations and documents. This is not a cosmetic gap; it
+is a workflow a real dispatcher hits routinely and a production tool
+cannot lack. Fixed: both `ShipDetailDrawer.tsx` and
+`DriverDetailDrawer.tsx` gained an "Edit" mode — a form pre-filled from
+current values, mapped through `updateShip`/`updateDriver` on save, with
+optional text fields sent as `null` when cleared (distinct from `create`,
+where an empty field means "don't set it" — on `edit` it means "clear
+it," a deliberate difference in the same form pattern). Covered by new
+assertions in `test/integration/ships.test.ts` and `drivers.test.ts`
+(the existing "updates fields" tests now also assert `notes` round-trips
+through `PATCH`); verified live end-to-end for both entities against the
+running stack, including fields (ship `berth`/`cargoType`, driver
+`licenseNumber`) that had never been settable post-creation before this
+pass.
+
+**Document-requirement add-row was always visible while the destination
+add-row was a toggle — same drawer, two behaviors (resolved
+2026-08-05).** Found by re-reading `ShipDetailDrawer.tsx` fresh rather
+than trusting that a screen redesigned two passes ago was still
+internally consistent — it wasn't. Fixed by giving document requirements
+the same "+ Add document" / "Cancel" toggle pattern destinations already
+had. The ship-details info panel also had no section heading while
+"Destinations" and "Document requirements" both did; added a "Ship
+details" heading so all three sections in the drawer follow one pattern.
+
+**No visible keyboard-focus indicator on any text input across the
+entire application (resolved 2026-08-05) — the single highest-value
+accessibility finding.** Every input/select in the app sets
+`outline-none` for its custom border styling and never supplied a
+replacement focus style. A keyboard-only user tabbing through any form —
+exactly the "use only keyboard" scenario this review's dispatcher-day
+exercise calls for — got zero visual feedback about which field had
+focus. One global rule (`input:focus-visible, select:focus-visible,
+textarea:focus-visible { outline: 2px solid #1E7A8C; ... }` in
+`index.css`) fixes it everywhere at once rather than patching a focus
+class onto every one of the 40+ individual `<input>` occurrences across
+the codebase. Verified via a computed-style check on a live input
+(`outline: 2px solid rgb(30, 122, 140)` applied on focus).
+
+**Considered and explicitly rejected in this pass:** adding a `notes`
+field to the driver quick-add form, to mirror the ship create form. Ship
+creation is already a multi-field planning action; driver quick-add is
+deliberately four fields (name/phone/plate/type) matching how a
+dispatcher actually captures a driver — mid-phone-call, fast, refine
+later. Now that driver Edit exists, "refine later" is a real path, not a
+dead end, so the asymmetry between the two create forms is a considered
+UX decision, not an inconsistency to fix.

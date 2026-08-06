@@ -10,8 +10,10 @@ import { errorHandler } from './core/middleware/errorHandler';
 import { notFoundHandler } from './core/middleware/notFound';
 import { logger } from './core/logger';
 import { createAuthRouter } from './modules/auth/auth.routes';
+import { createDriversRouter } from './modules/drivers/drivers.routes';
 import { createHealthRouter } from './modules/health/health.routes';
 import { createOrganizationsRouter } from './modules/organizations/organizations.routes';
+import { createShipsRouter } from './modules/ships/ships.routes';
 
 export function createApp(container: Container): Express {
   const app = express();
@@ -44,6 +46,8 @@ export function createApp(container: Container): Express {
   app.use('/health', createHealthRouter(container.healthService));
   app.use('/api/v1/auth', createAuthRouter(container.authService));
   app.use('/api/v1/organizations', createOrganizationsRouter(container.organizationsService));
+  app.use('/api/v1/ships', createShipsRouter(container.shipsService));
+  app.use('/api/v1/drivers', createDriversRouter(container.driversService));
 
   app.use(notFoundHandler);
   app.use(errorHandler);
