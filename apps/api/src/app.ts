@@ -70,6 +70,7 @@ export function createApp(container: Container): Express {
   // voice.routes.ts for why this stays a separate module instead of a
   // change to assignments.routes.ts itself.
   app.use('/api/v1/assignments', voiceRouters.actionsRouter);
+  app.use('/api/v1/voice-calls', voiceRouters.callsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -2226,14 +2226,15 @@ directly (missing `recipients`, a malformed entry inside `recipients`, and
 the existing malformed-`structuredResult` case, which was already safe via
 `zod`'s `safeParse` and needed no fix).
 
-**Considered and deliberately not changed:** no `restart` policy exists on
-any `docker-compose.yml` service (postgres, redis, api, worker, or web) —
-this predates Phase 4 and applies uniformly across the whole dev stack, not
-something Phase 4 introduced or that Phase 4's scope covers alone; adding it
-only to the two Phase 4 services would be an inconsistent, unjustified
-special case rather than a real fix. Left for whoever addresses it
-repo-wide, alongside the already-documented production-Dockerfile
-limitation in `apps/api/Dockerfile`'s own comment.
+**Considered and deliberately not changed at the time:** no `restart` policy
+existed on any `docker-compose.yml` service (postgres, redis, api, worker,
+or web) — this predated Phase 4 and applied uniformly across the whole dev
+stack, so fixing it only for the two Phase 4 services would have been an
+inconsistent, unjustified special case. Addressed repo-wide during the
+Phase 0→4 consolidation pass instead (`restart: unless-stopped` on all five
+services) — see that section below. The already-documented
+production-Dockerfile limitation in `apps/api/Dockerfile`'s own comment is
+unrelated and still outstanding.
 
 **Final state (second gate):** 209/209 tests passing, clean
 `typecheck`/`lint`/`build` across all three workspaces, live-verified
@@ -2265,3 +2266,120 @@ the `build:contracts` prerequisite pattern already used by the same
 scripts. Re-verified end to end from a completely fresh clone: `pnpm
 install` → `typecheck`/`lint`/`test` (209/209)/`build`, all green, with
 nothing carried over from any prior working directory state.
+
+## Phase 4 frontend: Calls UI
+
+**Gap found before writing any code.** A full inspection of `apps/web`
+(not an assumption) found the Calls nav item already present in
+`App.tsx`'s `NAV_ITEMS` but permanently disabled (`comingSoon: true`, no
+`'calls'` case in the `Tab` union, no render branch) — Phase 4's backend
+(webhook, queue, reconciliation, the assignment-level "place a call" /
+"see the active call" UI from the prior Phase 4.5 session) was real and
+tested, but there was no dedicated place to see CALL-E's outreach across
+every ship. Verdict: **partial**, not missing and not complete — assignment
+integration existed, a standalone Calls surface did not.
+
+**Backend additions (only what the UI genuinely needed, nothing invented).**
+Two new read-only endpoints, both under `authorize('ships:read')` — the
+same permission every other read view over this data already uses, no new
+RBAC action introduced: `GET /api/v1/voice-calls` (paginated, filterable by
+`outcome`, reads `AssignmentAttempt WHERE provider IS NOT NULL` — that
+table already carried everything a resolved-call history needs and is
+cleanly paginatable by a real DB column) and `GET /api/v1/voice-calls/active`
+(reads `VoiceCallPlacement WHERE resolvedAt IS NULL`, deliberately
+unpaginated but capped at 50, since it's bounded in practice by
+`VOICE_CALLS_CONCURRENCY`). Kept as two purpose-fit queries rather than one
+UNION feed: the two tables are linked only by a shared `externalCallId`
+*value*, not a formal Prisma relation, so a single paginated feed across
+both would need an awkward hand-rolled UNION for no real benefit over two
+small, honest queries. Tenant isolation is enforced the same way
+`voice.service.ts` already enforces it elsewhere in this module (neither
+table is in `TENANT_SCOPED_MODELS`): explicit `assignment: { organizationId
+}` relation filters, not the Prisma Client Extension. Covered by 5 new
+integration tests, including one that plants two organizations' calls and
+asserts org A's list never contains org B's row.
+
+**Frontend.** `apps/web/src/features/calls/` — `CallsPage.tsx`,
+`useCalls.ts`, `api.ts`, `statusStyles.ts` — built entirely from existing
+design-system patterns (`StatCard`/`Panel` from `DashboardPage`, the
+parallel-`pageSize:1`-queries stat-count pattern and conditional-polling
+pattern from `useAssignments`), reusing `ATTEMPT_OUTCOME_LABEL` from
+`assignments/statusStyles.ts` rather than inventing new outcome vocabulary
+for the same underlying fact. Deliberately **read-only**: no "call again"
+action on a history row, because that DTO doesn't carry the assignment's
+*current* status (it can have changed since the call happened), and
+offering an action against a possibly-stale assignment would risk a
+duplicate/incorrect placement — call-initiation stays exclusively on the
+Assignment resource, where current state is authoritative. A "View in
+Assignments" button was added to the call detail modal (satisfying the
+"navigate assignment↔call" requirement) via the same `onNavigate` prop
+convention `DashboardPage` already uses; the reverse link (an Assignment
+row deep-linking to its own filtered call history) was scoped out —
+`AssignmentsPage`/`CallsPage` have no single-record deep-linking today, and
+adding it is a larger change than "a small change," which the task's own
+scope rule ruled out.
+
+**Live verification, not just source review.** Ran the actual stack
+(`dev:api` + `dev:web` against the real dev Postgres/Redis) and drove it
+through a real browser: empty state, a genuinely placed call (202 Accepted
+from the real endpoint, including a double-click that both went through as
+202s — proving the UI does not itself dedupe; the backend's existing
+idempotency ref is what actually protects against a duplicate placement),
+an injected API-down state (confirmed the error path renders "Could not
+load call history" / "Could not load active calls" rather than hiding the
+failure), the resolved-call list, outcome filtering, the in-flight
+"Calling now" card, both branches of the detail modal, the new
+cross-navigation button landing on Assignments, and a mobile (375px)
+layout check. No console errors, no failed requests, no hardcoded/fake
+data anywhere — every number on the page traces to a real endpoint. (Local
+dev has no real CALL-E credentials, so two resolved outcomes and one active
+placement were seeded directly into the dev database to exercise rendering
+paths a fresh empty DB can't reach; removed after verification — this
+does not substitute for the 5 integration tests, which exercise the same
+code paths against real HTTP requests.)
+
+**Second, independent audit pass** (as a reviewer who hadn't seen the
+implementation): checked for dead buttons, hidden errors, duplicate-action
+risk, stale modal state, authorization gaps, and backend/UI contract
+mismatches. One real gap found and fixed — the missing
+"navigate assignment↔call" link, added as above. Everything else held up:
+tenant isolation is server-enforced and test-covered, not a client-side
+filter; the provider name shown (`"call-e"`) is a label, never a secret,
+and CALL-E's real API key never reaches the browser; loading/empty/error
+states are all explicit, not silently swallowed. One accepted, narrow
+limitation, not fixed: `useActiveCalls`'s conditional polling (same
+pattern as `useAssignments`) stops entirely once it observes zero active
+calls, so a call placed by a *different* tab/session while this page sits
+idle at zero won't appear until the page remounts — identical, pre-existing
+behavior to the pattern it was copied from, not something introduced here.
+
+## Phase 0→4 repository consolidation
+
+Two genuine issues found during a final consolidation pass over the whole
+Phase 0→4 baseline (git history, working tree, secrets, and a re-run of the
+adversarial test list against what already existed), both fixed:
+
+1. **Missing `docker-compose.yml` restart policies (repo-wide).** Flagged
+   as "considered and deliberately not changed" during the Phase 4 gate
+   audit above, specifically because fixing it only for the two Phase 4
+   services would have been an inconsistent special case — the right fix
+   was always repo-wide. Added `restart: unless-stopped` to all five
+   services (postgres, redis, api, worker, web). Verified with
+   `docker compose config --quiet`.
+2. **A wrong test count in the Calls UI consolidation commit message**
+   (claimed 219/219; the actual, re-verified count was 216 — 214 backend +
+   2 frontend). Corrected by amending that commit before it left this
+   machine; not a code defect, just an arithmetic error caught on review.
+
+Everything else audited in this pass — tenant isolation, webhook trust
+model, idempotency, outcome-translation determinism, secret handling,
+CALL-E abstraction boundary — held up against the full adversarial list
+(duplicate click/job/webhook, concurrent webhook, cross-tenant access,
+malformed webhook, provider error propagation, stale/missed-webhook
+reconciliation, a call resolving concurrently with a human action, expired
+auth, empty/API-down/mobile Calls page) with no further changes needed;
+Redis/DB-restart resilience for the voice queues specifically relies on
+BullMQ/ioredis's own reconnect behavior and wasn't re-proven with a live
+container kill in this pass (general infra chaos testing was done in
+Phase 1). Final state: 216/216 tests, clean typecheck/lint/build across all
+three workspaces, working tree clean.

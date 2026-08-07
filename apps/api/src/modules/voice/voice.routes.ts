@@ -1,7 +1,9 @@
+import { voiceCallListQuerySchema } from '@kinvo/contracts';
 import type { RequestHandler } from 'express';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { authorize } from '../../core/middleware/authorize';
+import { validateQuery } from '../../core/middleware/validate';
 import type { VoiceProvider } from '../../core/voice/VoiceProvider';
 import { createVoiceController } from './voice.controller';
 import type { VoiceService } from './voice.service';
@@ -9,11 +11,12 @@ import type { VoiceService } from './voice.service';
 export interface VoiceRouters {
   actionsRouter: Router;
   webhookRouter: Router;
+  callsRouter: Router;
 }
 
 /**
- * Two separate routers sharing one controller, mounted at two very
- * different trust levels in app.ts:
+ * Three routers sharing one controller, mounted at very different trust
+ * levels in app.ts:
  *
  *  - `actionsRouter` (`/api/v1/assignments/:assignmentId/voice-calls`) is a
  *    dispatcher-triggered action on the existing Assignment resource,
@@ -23,6 +26,13 @@ export interface VoiceRouters {
  *    than folded into assignments.routes.ts so Phase 3's already-hardened
  *    assignments module stays untouched — this is a new capability, not a
  *    modification to its existing surface.
+ *  - `callsRouter` (`/api/v1/voice-calls`) is the read side for the Calls
+ *    UI — reuses `ships:read`, matching every other read-only view over
+ *    the same underlying assignment/driver/ship data a dispatcher already
+ *    has access to. Deliberately its own resource, not a filter on
+ *    `GET /api/v1/assignments`: a call is backed by AssignmentAttempt
+ *    (resolved) or VoiceCallPlacement (in flight), neither of which the
+ *    assignments list can paginate or filter by outcome.
  *  - `webhookRouter` (`/webhooks/call-e`) is CALL-E calling Kinvo, not the
  *    other way around — deliberately outside `authenticate` entirely (see
  *    voice.controller.ts's receiveCallEWebhook for why).
@@ -41,6 +51,16 @@ export function createVoiceRouters(
     authorize('ships:manage'),
     controller.placeCallForAssignment,
   );
+
+  const callsRouter = Router();
+  callsRouter.use(authenticate);
+  callsRouter.get(
+    '/',
+    authorize('ships:read'),
+    validateQuery(voiceCallListQuerySchema),
+    controller.listCalls,
+  );
+  callsRouter.get('/active', authorize('ships:read'), controller.listActiveCalls);
 
   const webhookRouter = Router();
   // Public and unauthenticated by necessity (see above), which makes it the
@@ -64,5 +84,5 @@ export function createVoiceRouters(
   });
   webhookRouter.post('/call-e', webhookRateLimiter, controller.receiveCallEWebhook);
 
-  return { actionsRouter, webhookRouter };
+  return { actionsRouter, webhookRouter, callsRouter };
 }

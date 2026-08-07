@@ -1,3 +1,10 @@
+import type {
+  ActiveVoiceCallDto,
+  ActiveVoiceCallsResponse,
+  ResolvedVoiceCallDto,
+  VoiceCallListQuery,
+  VoiceCallListResponse,
+} from '@kinvo/contracts';
 import { Prisma } from '@prisma/client';
 import type { Logger } from 'pino';
 import type { AssignmentsService, AttemptActor } from '../assignments/assignments.service';
@@ -29,6 +36,97 @@ export interface VoiceService {
   processWebhookSignal(data: ProcessVoiceWebhookJobData): Promise<void>;
   /** Periodic sweep: re-checks placements that never got a terminal webhook, and force-times-out ones stuck well past budget. */
   reconcileStaleAttempts(): Promise<void>;
+  /** HTTP-triggered: paginated, filterable history of resolved automated calls for the Calls UI. */
+  listCalls(query: VoiceCallListQuery): Promise<VoiceCallListResponse>;
+  /** HTTP-triggered: calls currently in flight (no terminal outcome yet) for the Calls UI. */
+  listActiveCalls(): Promise<ActiveVoiceCallsResponse>;
+}
+
+// Denormalized driver/ship context shared by both the resolved-call and
+// active-call read models — same reasoning as AssignmentDto's own
+// denormalization (assignment.schema.ts): the Calls UI needs to render a
+// list of rows naming a driver and a destination without a second request
+// per row.
+const VOICE_CALL_ASSIGNMENT_CONTEXT = {
+  select: {
+    driverId: true,
+    driver: { select: { fullName: true, phone: true } },
+    truckRequirement: {
+      select: {
+        shipId: true,
+        destination: true,
+        truckType: true,
+        ship: { select: { shipName: true } },
+      },
+    },
+  },
+} satisfies Prisma.AssignmentAttemptInclude['assignment'];
+
+type VoiceCallAssignmentContext = {
+  driverId: string;
+  driver: { fullName: string; phone: string };
+  truckRequirement: {
+    shipId: string;
+    destination: string;
+    truckType: string;
+    ship: { shipName: string };
+  };
+};
+
+function toResolvedVoiceCallDto(att: {
+  id: string;
+  assignmentId: string;
+  outcome: ResolvedVoiceCallDto['outcome'];
+  notes: string | null;
+  provider: string | null;
+  externalCallId: string | null;
+  attemptedAt: Date;
+  assignment: VoiceCallAssignmentContext;
+}): ResolvedVoiceCallDto {
+  return {
+    id: att.id,
+    assignmentId: att.assignmentId,
+    driverId: att.assignment.driverId,
+    driverName: att.assignment.driver.fullName,
+    driverPhone: att.assignment.driver.phone,
+    shipId: att.assignment.truckRequirement.shipId,
+    shipName: att.assignment.truckRequirement.ship.shipName,
+    destination: att.assignment.truckRequirement.destination,
+    truckType: att.assignment.truckRequirement.truckType,
+    // Non-null by construction — every AssignmentAttempt this query selects
+    // is filtered to `provider: { not: null }`, and attemptRecordFields
+    // (assignments.service.ts) always sets provider and externalCallId
+    // together for a system actor, never one without the other.
+    provider: att.provider as string,
+    externalCallId: att.externalCallId,
+    outcome: att.outcome,
+    notes: att.notes,
+    attemptedAt: att.attemptedAt.toISOString(),
+  };
+}
+
+function toActiveVoiceCallDto(placement: {
+  id: string;
+  assignmentId: string;
+  provider: string;
+  externalCallId: string;
+  placedAt: Date;
+  assignment: VoiceCallAssignmentContext;
+}): ActiveVoiceCallDto {
+  return {
+    id: placement.id,
+    assignmentId: placement.assignmentId,
+    driverId: placement.assignment.driverId,
+    driverName: placement.assignment.driver.fullName,
+    driverPhone: placement.assignment.driver.phone,
+    shipId: placement.assignment.truckRequirement.shipId,
+    shipName: placement.assignment.truckRequirement.ship.shipName,
+    destination: placement.assignment.truckRequirement.destination,
+    truckType: placement.assignment.truckRequirement.truckType,
+    provider: placement.provider,
+    externalCallId: placement.externalCallId,
+    placedAt: placement.placedAt.toISOString(),
+  };
 }
 
 type VoiceCallPlacementRecord = {
@@ -383,10 +481,62 @@ export function createVoiceService({
     }
   }
 
+  async function listCalls(query: VoiceCallListQuery): Promise<VoiceCallListResponse> {
+    const context = getRequestContext();
+    // AssignmentAttempt is deliberately not tenant-scoped (see
+    // core/prisma.ts's TENANT_SCOPED_MODELS comment) — every access goes
+    // through an already-owned Assignment, exactly like
+    // assignments.service.ts's own attempt queries. `provider: { not: null
+    // }` is what makes this the CALLS view rather than every human-recorded
+    // contact attempt too.
+    const where: Prisma.AssignmentAttemptWhereInput = {
+      provider: { not: null },
+      assignment: { organizationId: context.organizationId },
+      ...(query.outcome ? { outcome: query.outcome } : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      prisma.assignmentAttempt.findMany({
+        where,
+        include: { assignment: VOICE_CALL_ASSIGNMENT_CONTEXT },
+        orderBy: { attemptedAt: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      prisma.assignmentAttempt.count({ where }),
+    ]);
+
+    return {
+      items: items.map(toResolvedVoiceCallDto),
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
+    };
+  }
+
+  async function listActiveCalls(): Promise<ActiveVoiceCallsResponse> {
+    const context = getRequestContext();
+    // Deliberately unpaginated but capped, not a full list endpoint — see
+    // activeVoiceCallSchema's doc comment in packages/contracts. In
+    // practice bounded by VOICE_CALLS_CONCURRENCY; `take` is defense, not
+    // load-bearing.
+    const placements = await prisma.voiceCallPlacement.findMany({
+      where: { resolvedAt: null, assignment: { organizationId: context.organizationId } },
+      include: { assignment: VOICE_CALL_ASSIGNMENT_CONTEXT },
+      orderBy: { placedAt: 'desc' },
+      take: 50,
+    });
+
+    return { items: placements.map(toActiveVoiceCallDto) };
+  }
+
   return {
     placeCallForAssignment,
     executeCallPlacement,
     processWebhookSignal,
     reconcileStaleAttempts,
+    listCalls,
+    listActiveCalls,
   };
 }

@@ -1,3 +1,4 @@
+import type { VoiceCallListQuery } from '@kinvo/contracts';
 import type { RequestHandler } from 'express';
 import { logger } from '../../core/logger';
 import { voiceWebhookEventJobId, voiceWebhookEventsQueue } from '../../core/queue/queues';
@@ -7,6 +8,8 @@ import type { VoiceService } from './voice.service';
 export interface VoiceController {
   placeCallForAssignment: RequestHandler;
   receiveCallEWebhook: RequestHandler;
+  listCalls: RequestHandler;
+  listActiveCalls: RequestHandler;
 }
 
 export function createVoiceController(
@@ -62,5 +65,23 @@ export function createVoiceController(
     }
   };
 
-  return { placeCallForAssignment, receiveCallEWebhook };
+  const listCalls: RequestHandler = async (req, res, next) => {
+    try {
+      const result = await voiceService.listCalls(req.query as unknown as VoiceCallListQuery);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  const listActiveCalls: RequestHandler = async (_req, res, next) => {
+    try {
+      const result = await voiceService.listActiveCalls();
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  return { placeCallForAssignment, receiveCallEWebhook, listCalls, listActiveCalls };
 }

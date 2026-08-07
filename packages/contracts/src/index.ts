@@ -134,3 +134,18 @@ export type {
   AssignmentListQuery,
   AssignmentListResponse,
 } from './assignment.schema';
+
+export {
+  resolvedVoiceCallSchema,
+  voiceCallListQuerySchema,
+  voiceCallListResponseSchema,
+  activeVoiceCallSchema,
+  activeVoiceCallsResponseSchema,
+} from './voiceCall.schema';
+export type {
+  ResolvedVoiceCallDto,
+  VoiceCallListQuery,
+  VoiceCallListResponse,
+  ActiveVoiceCallDto,
+  ActiveVoiceCallsResponse,
+} from './voiceCall.schema';

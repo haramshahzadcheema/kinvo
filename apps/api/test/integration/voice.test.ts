@@ -624,3 +624,124 @@ describe('voice module — reconciliation', () => {
     expect(assignment.body.status).toBe('CONFIRMED');
   });
 });
+
+describe('voice module — Calls list API', () => {
+  async function placeAndResolve(
+    container: ReturnType<typeof buildAppWithContainer>['container'],
+    owner: { organizationId: string },
+    assignmentId: string,
+    outcome: Parameters<FakeVoiceProvider['setOutcome']>[1],
+  ) {
+    await runWithRequestContext(systemContextFor(owner), () =>
+      container.voiceService.executeCallPlacement({
+        assignmentId,
+        organizationId: owner.organizationId,
+        callAttemptRef: `${assignmentId}:0`,
+      }),
+    );
+    const placement = await prisma.voiceCallPlacement.findFirstOrThrow({ where: { assignmentId } });
+    const fake = container.voiceProvider as FakeVoiceProvider;
+    fake.setOutcome(placement.externalCallId, outcome);
+    await container.voiceService.processWebhookSignal({
+      provider: 'fake',
+      eventId: `evt-${placement.externalCallId}`,
+      externalCallId: placement.externalCallId,
+    });
+  }
+
+  it('lists resolved calls with driver/ship context, most recent first', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, assignmentId } = await setUpPendingAssignment(app);
+    await placeAndResolve(container, owner, assignmentId, { kind: 'confirmed' });
+
+    const response = await request(app)
+      .get('/api/v1/voice-calls')
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.items).toHaveLength(1);
+    expect(response.body.items[0]).toMatchObject({
+      assignmentId,
+      driverName: expect.any(String),
+      shipName: expect.any(String),
+      provider: 'fake',
+      outcome: 'CONFIRMED',
+    });
+    expect(response.body.total).toBe(1);
+  });
+
+  it('filters resolved calls by outcome', async () => {
+    const { app, container } = buildAppWithContainer();
+    const first = await setUpPendingAssignment(app);
+    await placeAndResolve(container, first.owner, first.assignmentId, { kind: 'confirmed' });
+
+    const second = await setUpPendingAssignment(app);
+    await placeAndResolve(container, second.owner, second.assignmentId, { kind: 'unreachable' });
+
+    const response = await request(app)
+      .get('/api/v1/voice-calls')
+      .query({ outcome: 'UNREACHABLE' })
+      .set('Authorization', `Bearer ${first.owner.accessToken}`);
+
+    // first.owner and second.owner are different organizations (each
+    // setUpPendingAssignment registers a fresh org) — this also doubles as
+    // a tenant-isolation check: org A's query must never surface org B's
+    // call regardless of the outcome filter matching.
+    expect(response.body.items).toHaveLength(0);
+  });
+
+  it("never leaks another organization's calls", async () => {
+    const { app, container } = buildAppWithContainer();
+    const orgA = await setUpPendingAssignment(app);
+    await placeAndResolve(container, orgA.owner, orgA.assignmentId, { kind: 'confirmed' });
+
+    const orgB = await setUpPendingAssignment(app);
+    await placeAndResolve(container, orgB.owner, orgB.assignmentId, { kind: 'confirmed' });
+
+    const response = await request(app)
+      .get('/api/v1/voice-calls')
+      .set('Authorization', `Bearer ${orgB.owner.accessToken}`);
+
+    expect(response.body.items).toHaveLength(1);
+    expect(response.body.items[0].assignmentId).toBe(orgB.assignmentId);
+  });
+
+  it('rejects an unauthenticated request', async () => {
+    const { app } = buildAppWithContainer();
+    const response = await request(app).get('/api/v1/voice-calls');
+    expect(response.status).toBe(401);
+  });
+
+  it('lists active (in-flight) calls, and they disappear once resolved', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, assignmentId } = await setUpPendingAssignment(app);
+
+    await runWithRequestContext(systemContextFor(owner), () =>
+      container.voiceService.executeCallPlacement({
+        assignmentId,
+        organizationId: owner.organizationId,
+        callAttemptRef: `${assignmentId}:0`,
+      }),
+    );
+
+    const whileActive = await request(app)
+      .get('/api/v1/voice-calls/active')
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(whileActive.body.items).toHaveLength(1);
+    expect(whileActive.body.items[0].assignmentId).toBe(assignmentId);
+
+    const placement = await prisma.voiceCallPlacement.findFirstOrThrow({ where: { assignmentId } });
+    const fake = container.voiceProvider as FakeVoiceProvider;
+    fake.setOutcome(placement.externalCallId, { kind: 'confirmed' });
+    await container.voiceService.processWebhookSignal({
+      provider: 'fake',
+      eventId: 'evt-active-resolve',
+      externalCallId: placement.externalCallId,
+    });
+
+    const afterResolve = await request(app)
+      .get('/api/v1/voice-calls/active')
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(afterResolve.body.items).toHaveLength(0);
+  });
+});

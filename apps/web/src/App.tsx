@@ -14,16 +14,17 @@ import {
 } from './components/icons';
 import { AssignmentsPage } from './features/assignments/AssignmentsPage';
 import { AuthScreen } from './features/auth/AuthScreen';
+import { CallsPage } from './features/calls/CallsPage';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { DriversPage } from './features/drivers/DriversPage';
 import { ShipsPage } from './features/ships/ShipsPage';
 import { AuthProvider } from './lib/auth';
 import { useAuth } from './lib/useAuth';
 
-type Tab = 'dashboard' | 'ships' | 'drivers' | 'assignments';
+type Tab = 'dashboard' | 'ships' | 'drivers' | 'assignments' | 'calls';
 
 interface NavItem {
-  key: Tab | 'calls' | 'notifications' | 'settings';
+  key: Tab | 'notifications' | 'settings';
   label: string;
   icon: (props: { className?: string }) => React.ReactElement;
   comingSoon?: boolean;
@@ -34,7 +35,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'ships', label: 'Ships', icon: ShipIcon },
   { key: 'drivers', label: 'Drivers', icon: TruckIcon },
   { key: 'assignments', label: 'Assignments', icon: AssignmentIcon },
-  { key: 'calls', label: 'Calls', icon: PhoneIcon, comingSoon: true },
+  { key: 'calls', label: 'Calls', icon: PhoneIcon },
   { key: 'notifications', label: 'Notifications', icon: BellIcon, comingSoon: true },
   { key: 'settings', label: 'Settings', icon: SettingsIcon, comingSoon: true },
 ];
@@ -75,7 +76,13 @@ function Shell() {
   }
 
   function selectNav(key: NavItem['key']) {
-    if (key === 'dashboard' || key === 'ships' || key === 'drivers' || key === 'assignments') {
+    if (
+      key === 'dashboard' ||
+      key === 'ships' ||
+      key === 'drivers' ||
+      key === 'assignments' ||
+      key === 'calls'
+    ) {
       navigate(key);
     }
   }
@@ -219,6 +226,7 @@ function Shell() {
           {tab === 'ships' && <ShipsPage autoOpenCreate={shipAutoOpen} />}
           {tab === 'drivers' && <DriversPage autoOpenCreate={driverAutoOpen} />}
           {tab === 'assignments' && <AssignmentsPage />}
+          {tab === 'calls' && <CallsPage onNavigate={navigate} />}
         </main>
       </div>
     </div>
