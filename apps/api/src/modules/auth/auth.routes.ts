@@ -3,14 +3,14 @@ import {
   loginRequestSchema,
   registerOrganizationRequestSchema,
 } from '@kinvo/contracts';
+import type { RequestHandler } from 'express';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { authenticate } from '../../core/middleware/authenticate';
 import { validateBody } from '../../core/middleware/validate';
 import { createAuthController } from './auth.controller';
 import type { AuthService } from './auth.service';
 
-export function createAuthRouter(authService: AuthService): Router {
+export function createAuthRouter(authService: AuthService, authenticate: RequestHandler): Router {
   const router = Router();
   const controller = createAuthController(authService);
 

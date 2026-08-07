@@ -13,16 +13,8 @@ import type {
 import { Prisma } from '@prisma/client';
 import type { AuditLogger } from '../../core/audit/audit-logger';
 import { ConflictError, NotFoundError } from '../../core/errors/AppError';
-import type { prisma as prismaClient } from '../../core/prisma';
+import type { prisma as prismaClient, TransactionClient } from '../../core/prisma';
 import { getRequestContext } from '../../core/request-context';
-
-// Prisma Client Extensions change the shape of the transaction-callback
-// client just enough that the base `Prisma.TransactionClient` type doesn't
-// structurally match it — deriving the type from the actual extended
-// client (rather than importing the generic one) is what keeps this
-// correct instead of fighting the type checker with a cast. Same
-// convention already established in organizations.service.ts.
-type TransactionClient = Parameters<Parameters<typeof prismaClient.$transaction>[0]>[0];
 
 export interface ShipsServiceDependencies {
   prisma: typeof prismaClient;
@@ -68,30 +60,78 @@ const VALID_TRANSITIONS: Record<ShipStatusValue, readonly ShipStatusValue[]> = {
   CANCELLED: [],
 };
 
-// Phase 3: each requirement's assignments are fetched (status only) so
-// confirmedCount/pendingCount can be derived in toTruckRequirementDto
-// below, rather than stored as columns that could drift from the real
-// Assignment rows. Volumes per requirement are small (tens, not
-// thousands), so reducing an in-memory array is the right call here, not
-// a filtered relation count — see docs/ARCHITECTURE.md's Phase 3
-// Decisions log.
+// Requirement counts are no longer carried as an included `assignments`
+// array — fetching every historical assignment row (REJECTED, WITHDRAWN,
+// CANCELLED, ... going back to the requirement's creation) just to reduce
+// two counts in JS scaled with a requirement's entire lifetime volume
+// instead of its currently-relevant rows, the same class of problem
+// Blocker 3 in docs/ARCHITECTURE.md's Phase 3 hardening pass already fixed
+// for the flat Assignments list. `RequirementCounts`/`loadRequirementCounts`
+// below replace it with one `groupBy` query per ship-facing call, filtered
+// to only CONFIRMED/PENDING and only the requirement ids actually being
+// rendered — its result size is bounded by (requirement count × 2), never
+// by historical assignment volume.
+interface RequirementCounts {
+  confirmedCount: number;
+  pendingCount: number;
+}
+
+// Accepts either the outer tenant-scoped client or a mid-transaction `tx`
+// — exported so assignments.service.ts's revertShipIfNowShort can reuse
+// this exact query instead of re-fetching a requirement's full assignment
+// history the way it used to (the same anti-pattern this function was
+// originally written to replace, just scoped to one ship instead of a
+// paginated list). Both client shapes expose an identical `.assignment`
+// delegate, so a plain union is enough — no cast needed.
+export async function loadRequirementCounts(
+  prisma: typeof prismaClient | TransactionClient,
+  truckRequirementIds: string[],
+): Promise<Map<string, RequirementCounts>> {
+  const counts = new Map<string, RequirementCounts>();
+  if (truckRequirementIds.length === 0) {
+    return counts;
+  }
+
+  const grouped = await prisma.assignment.groupBy({
+    by: ['truckRequirementId', 'status'],
+    where: { truckRequirementId: { in: truckRequirementIds }, status: { in: ['CONFIRMED', 'PENDING'] } },
+    _count: { _all: true },
+  });
+
+  for (const row of grouped) {
+    const entry = counts.get(row.truckRequirementId) ?? { confirmedCount: 0, pendingCount: 0 };
+    if (row.status === 'CONFIRMED') {
+      entry.confirmedCount = row._count._all;
+    } else if (row.status === 'PENDING') {
+      entry.pendingCount = row._count._all;
+    }
+    counts.set(row.truckRequirementId, entry);
+  }
+  return counts;
+}
+
 const SHIP_INCLUDE = {
-  truckRequirements: { include: { assignments: { select: { status: true } } } },
+  truckRequirements: true,
   documentRequirements: true,
 } as const;
 
 type ShipWithRequirements = Prisma.ShipGetPayload<{ include: typeof SHIP_INCLUDE }>;
 
-function toTruckRequirementDto(req: {
-  id: string;
-  destination: string;
-  truckType: string;
-  quantityNeeded: number;
-  rate: Prisma.Decimal | null;
-  rateCurrency: string | null;
-  notes: string | null;
-  assignments: { status: string }[];
-}): TruckRequirementDto {
+function toTruckRequirementDto(
+  req: {
+    id: string;
+    destination: string;
+    truckType: string;
+    quantityNeeded: number;
+    rate: Prisma.Decimal | null;
+    rateCurrency: string | null;
+    notes: string | null;
+  },
+  // Absent (not just zero) for a requirement guaranteed to have no
+  // assignments yet — e.g. one just created in this same request — where
+  // skipping the counts query entirely is correct, not an approximation.
+  counts: RequirementCounts | undefined,
+): TruckRequirementDto {
   return {
     id: req.id,
     destination: req.destination,
@@ -100,8 +140,8 @@ function toTruckRequirementDto(req: {
     rate: req.rate ? req.rate.toNumber() : null,
     rateCurrency: req.rateCurrency,
     notes: req.notes,
-    confirmedCount: req.assignments.filter((a) => a.status === 'CONFIRMED').length,
-    pendingCount: req.assignments.filter((a) => a.status === 'PENDING').length,
+    confirmedCount: counts?.confirmedCount ?? 0,
+    pendingCount: counts?.pendingCount ?? 0,
   };
 }
 
@@ -113,7 +153,10 @@ function toDocumentRequirementDto(req: {
   return { id: req.id, documentType: req.documentType, isRequired: req.isRequired };
 }
 
-function toShipDto(ship: ShipWithRequirements): ShipDto {
+function toShipDto(
+  ship: ShipWithRequirements,
+  countsByRequirementId: Map<string, RequirementCounts>,
+): ShipDto {
   return {
     id: ship.id,
     shipName: ship.shipName,
@@ -125,7 +168,9 @@ function toShipDto(ship: ShipWithRequirements): ShipDto {
     cargoType: ship.cargoType,
     status: ship.status,
     notes: ship.notes,
-    truckRequirements: ship.truckRequirements.map(toTruckRequirementDto),
+    truckRequirements: ship.truckRequirements.map((req) =>
+      toTruckRequirementDto(req, countsByRequirementId.get(req.id)),
+    ),
     documentRequirements: ship.documentRequirements.map(toDocumentRequirementDto),
     createdAt: ship.createdAt.toISOString(),
     updatedAt: ship.updatedAt.toISOString(),
@@ -160,6 +205,36 @@ export async function resolveTenantScopedTruckRequirement(
     throw new NotFoundError('Truck requirement not found.');
   }
   return requirement;
+}
+
+// Locks this truck requirement row for the life of the enclosing
+// transaction — closes a real TOCTOU race in updateTruckRequirement's two
+// business-rule guards (destination/truckType lock once a driver is
+// active; quantityNeeded floor at the confirmed count): both used to run a
+// plain, unlocked `count()` followed by a separate, unlocked `update()`,
+// so a concurrent createAssignment/confirmAssignment could land in the gap
+// and silently violate the exact invariant the guard exists to enforce
+// (e.g. quantityNeeded dropped to 0 while a CONFIRMED assignment still
+// exists, or a requirement's destination changed after a driver already
+// agreed to a different one). assignments.service.ts's createAssignment
+// and confirmAssignment take this same lock as their first step, before
+// touching Assignment/Driver at all, so every operation whose correctness
+// depends on this requirement's guard invariants serializes through here.
+// Raw SQL because `FOR UPDATE` isn't reachable through Prisma's query
+// builder. TruckRequirement carries no organizationId of its own (see
+// core/prisma.ts's TENANT_SCOPED_MODELS comment) — scoped by shipId
+// instead, the same defensive-re-scoping-on-top-of-an-already-resolved-
+// entity pattern lockShipRow/lockDriverRow apply with organizationId.
+export async function lockTruckRequirementRow(
+  tx: TransactionClient,
+  shipId: string,
+  truckRequirementId: string,
+): Promise<void> {
+  await tx.$queryRaw`
+    SELECT id FROM truck_requirements
+    WHERE id = ${truckRequirementId} AND "shipId" = ${shipId}
+    FOR UPDATE
+  `;
 }
 
 export function createShipsService({
@@ -211,8 +286,17 @@ export function createShipsService({
       prisma.ship.count({ where }),
     ]);
 
+    // One counts query for the whole page, not one per ship or per
+    // requirement — this is the query listShips previously had no
+    // equivalent to, since counts came bundled in SHIP_INCLUDE's now-removed
+    // `assignments` include instead.
+    const counts = await loadRequirementCounts(
+      prisma,
+      items.flatMap((ship) => ship.truckRequirements.map((req) => req.id)),
+    );
+
     return {
-      items: items.map(toShipDto),
+      items: items.map((ship) => toShipDto(ship, counts)),
       page: query.page,
       pageSize: query.pageSize,
       total,
@@ -225,7 +309,11 @@ export function createShipsService({
     if (!ship) {
       throw new NotFoundError('Ship not found.');
     }
-    return toShipDto(ship);
+    const counts = await loadRequirementCounts(
+      prisma,
+      ship.truckRequirements.map((req) => req.id),
+    );
+    return toShipDto(ship, counts);
   }
 
   async function createShip(input: CreateShipRequest): Promise<ShipDto> {
@@ -256,7 +344,7 @@ export function createShipsService({
       include: SHIP_INCLUDE,
     });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'ship.created',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -264,7 +352,11 @@ export function createShipsService({
       metadata: { shipName: ship.shipName },
     });
 
-    return toShipDto(ship);
+    // No counts query needed: every truck requirement here was just
+    // created in the same statement above, so it has zero assignments by
+    // construction — toTruckRequirementDto's fallback (an absent map entry
+    // reads as 0/0) is exactly correct, not an approximation.
+    return toShipDto(ship, new Map());
   }
 
   async function updateShip(shipId: string, input: UpdateShipRequest): Promise<ShipDto> {
@@ -291,14 +383,22 @@ export function createShipsService({
       include: SHIP_INCLUDE,
     });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'ship.updated',
       actorUserId: context.userId,
       organizationId: context.organizationId,
       targetId: shipId,
     });
 
-    return toShipDto(ship);
+    // Unlike createShip, this requirement set is not guaranteed empty —
+    // updateShip never touches truckRequirements itself, but the ship's
+    // existing requirements may already carry real assignments from
+    // earlier requests.
+    const counts = await loadRequirementCounts(
+      prisma,
+      ship.truckRequirements.map((req) => req.id),
+    );
+    return toShipDto(ship, counts);
   }
 
   // Phase 3: cancelling or completing a ship must clean up its live
@@ -400,7 +500,7 @@ export function createShipsService({
       }
     });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'ship.status_changed',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -416,7 +516,11 @@ export function createShipsService({
     if (!finalShip) {
       throw new NotFoundError('Ship not found.');
     }
-    return toShipDto(finalShip);
+    const counts = await loadRequirementCounts(
+      prisma,
+      finalShip.truckRequirements.map((req) => req.id),
+    );
+    return toShipDto(finalShip, counts);
   }
 
   async function deleteShip(shipId: string): Promise<void> {
@@ -428,7 +532,7 @@ export function createShipsService({
     // (onDelete: SetNull) — a deleted ship never leaves a dangling FK.
     await prisma.ship.delete({ where: { id: shipId } });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'ship.deleted',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -443,9 +547,10 @@ export function createShipsService({
     await resolveOwnedShip(shipId);
     const requirement = await prisma.truckRequirement.create({
       data: { shipId, ...input },
-      include: { assignments: { select: { status: true } } },
     });
-    return toTruckRequirementDto(requirement);
+    // Just created — zero assignments by construction, same reasoning as
+    // createShip.
+    return toTruckRequirementDto(requirement, undefined);
   }
 
   // A truck/document requirement row belonging to another organization —
@@ -487,42 +592,49 @@ export function createShipsService({
   ): Promise<TruckRequirementDto> {
     await resolveOwnedTruckRequirement(shipId, truckRequirementId);
 
-    // Phase 3: once a requirement has any active (PENDING/CONFIRMED)
-    // assignment, its destination/truckType are exactly the facts a
-    // driver was told and agreed to — changing them after the fact would
-    // silently invalidate what that driver confirmed to, without telling
-    // them. quantityNeeded remains editable, but never below the number
-    // already confirmed: silently orphaning a confirmed driver is never
-    // acceptable, only an explicit cancellation is.
-    if (input.destination !== undefined || input.truckType !== undefined) {
-      const activeCount = await prisma.assignment.count({
-        where: { truckRequirementId, status: { in: ['PENDING', 'CONFIRMED'] } },
-      });
-      if (activeCount > 0) {
-        throw new ConflictError(
-          'Cannot change destination or truck type once drivers have been assigned to this requirement.',
-        );
-      }
-    }
+    const requirement = await prisma.$transaction(async (tx) => {
+      await lockTruckRequirementRow(tx, shipId, truckRequirementId);
 
-    if (input.quantityNeeded !== undefined) {
-      const confirmedCount = await prisma.assignment.count({
-        where: { truckRequirementId, status: 'CONFIRMED' },
-      });
-      if (input.quantityNeeded < confirmedCount) {
-        throw new ConflictError(
-          `Cannot reduce quantity below ${confirmedCount} confirmed driver(s). Cancel assignments first.`,
-          { confirmedCount },
-        );
+      // Phase 3: once a requirement has any active (PENDING/CONFIRMED)
+      // assignment, its destination/truckType are exactly the facts a
+      // driver was told and agreed to — changing them after the fact
+      // would silently invalidate what that driver confirmed to, without
+      // telling them. quantityNeeded remains editable, but never below
+      // the number already confirmed: silently orphaning a confirmed
+      // driver is never acceptable, only an explicit cancellation is.
+      // Re-checked here, inside the same transaction as the lock above
+      // and the write below — see lockTruckRequirementRow's comment for
+      // the race this closes.
+      if (input.destination !== undefined || input.truckType !== undefined) {
+        const activeCount = await tx.assignment.count({
+          where: { truckRequirementId, status: { in: ['PENDING', 'CONFIRMED'] } },
+        });
+        if (activeCount > 0) {
+          throw new ConflictError(
+            'Cannot change destination or truck type once drivers have been assigned to this requirement.',
+          );
+        }
       }
-    }
 
-    const requirement = await prisma.truckRequirement.update({
-      where: { id: truckRequirementId },
-      data: input,
-      include: { assignments: { select: { status: true } } },
+      if (input.quantityNeeded !== undefined) {
+        const confirmedCount = await tx.assignment.count({
+          where: { truckRequirementId, status: 'CONFIRMED' },
+        });
+        if (input.quantityNeeded < confirmedCount) {
+          throw new ConflictError(
+            `Cannot reduce quantity below ${confirmedCount} confirmed driver(s). Cancel assignments first.`,
+            { confirmedCount },
+          );
+        }
+      }
+
+      return tx.truckRequirement.update({
+        where: { id: truckRequirementId },
+        data: input,
+      });
     });
-    return toTruckRequirementDto(requirement);
+    const counts = await loadRequirementCounts(prisma, [truckRequirementId]);
+    return toTruckRequirementDto(requirement, counts.get(truckRequirementId));
   }
 
   async function removeTruckRequirement(shipId: string, truckRequirementId: string): Promise<void> {

@@ -28,6 +28,15 @@ export function getAccessToken(): string | null {
 
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
+// Without this, a dead backend or a dropped connection left every in-flight
+// query/mutation pending indefinitely — React Query never settles, and the
+// UI has no way to tell the user anything went wrong (no error, no retry,
+// just a permanently "loading" button). 15s comfortably covers this app's
+// normal request latency (every endpoint is single-digit-ms in practice —
+// see the integration test suite's timings) while still being short enough
+// that a genuinely hung request resolves to a visible, actionable error.
+const REQUEST_TIMEOUT_MS = 15_000;
+
 async function request<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   if (accessToken) {
@@ -37,12 +46,27 @@ async function request<T>(method: HttpMethod, path: string, body?: unknown): Pro
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(`${API_URL}${path}`, {
-    method,
-    headers,
-    credentials: 'include', // sends/receives the httpOnly refresh-token cookie
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method,
+      headers,
+      credentials: 'include', // sends/receives the httpOnly refresh-token cookie
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      // AbortSignal.timeout() aborts the fetch itself and rejects with a
+      // DOMException named "TimeoutError" — distinct from a plain network
+      // failure (DNS/connection refused, which fetch also rejects, but
+      // without ever having sent anything). Both are translated to
+      // ApiError below so every existing `isApiError(err) ? err.message :
+      // ...` call site already gets a sensible message with no changes.
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw new ApiError('The request took too long to respond. Please try again.', 0);
+    }
+    throw new ApiError('Could not reach the server. Check your connection and try again.', 0);
+  }
 
   if (response.status === 204) {
     return undefined as T;

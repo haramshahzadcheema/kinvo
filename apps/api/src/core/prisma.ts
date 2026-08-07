@@ -141,6 +141,18 @@ export const prisma = basePrisma.$extends({
   },
 });
 
+// Prisma Client Extensions change the shape of the transaction-callback
+// client just enough that the base `Prisma.TransactionClient` type doesn't
+// structurally match it — deriving the type from the actual extended
+// client (rather than importing the generic one) is what keeps call sites
+// correct instead of fighting the type checker with a cast. Defined once
+// here rather than re-derived per service file (it used to be copy-pasted
+// identically into ships.service.ts, assignments.service.ts, and
+// organizations.service.ts) — one definition, imported everywhere a
+// function needs to accept "whichever Prisma client it's given, possibly
+// mid-transaction" as a parameter.
+export type TransactionClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
 /**
  * Explicit, logged escape hatch from tenant scoping — for the handful of
  * operations that legitimately have to run before any tenant context

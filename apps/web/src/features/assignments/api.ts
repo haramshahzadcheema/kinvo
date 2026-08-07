@@ -49,4 +49,6 @@ export const assignmentsApi = {
     apiPatch<AssignmentDto>(`/api/v1/assignments/${assignmentId}/no-show`),
   logAttempt: (assignmentId: string, input: LogAttemptRequest) =>
     apiPost<AssignmentAttemptDto>(`/api/v1/assignments/${assignmentId}/attempts`, input),
+  placeVoiceCall: (assignmentId: string) =>
+    apiPost<{ status: string }>(`/api/v1/assignments/${assignmentId}/voice-calls`),
 };

@@ -20,9 +20,16 @@ const payload = {
 };
 
 describe('access tokens', () => {
-  it('round-trips a signed token back to its original payload', () => {
+  it('round-trips a signed token back to its original claims, plus an auto-populated issuedAtMs', () => {
     const token = signAccessToken(payload);
-    expect(verifyAccessToken(token)).toEqual(payload);
+    // `issuedAtMs` (milliseconds since epoch) is stamped on by
+    // signAccessToken itself, not supplied by the caller — a custom claim
+    // rather than the standard `iat` (whole seconds only), since
+    // authenticate.ts's revocation check needs enough precision to tell
+    // apart a token refreshed in the same wall-clock second as a
+    // revocation from the stale token that revocation was meant to catch
+    // (see token-revocation.ts).
+    expect(verifyAccessToken(token)).toEqual({ ...payload, issuedAtMs: expect.any(Number) });
   });
 
   it('rejects a malformed token', () => {

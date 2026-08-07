@@ -328,6 +328,95 @@ describe('assignment state transitions', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`);
     expect(ship.body.status).toBe('RECRUITING');
   });
+
+  it('reverts ship status correctly even when the requirement also carries unrelated terminal-status history', async () => {
+    // Regression test for revertShipIfNowShort's fetch-shape fix: the
+    // shortage check used to fetch every assignment ever created against
+    // each requirement (including terminal REJECTED/WITHDRAWN ones) and
+    // filter for CONFIRMED in JS — the same anti-pattern SHIP_INCLUDE's
+    // fix closed for the list/detail endpoints, just scoped to one ship.
+    // It now uses the same groupBy-based loadRequirementCounts. This
+    // proves the switch didn't change behavior: terminal history must not
+    // pollute the shortage calculation either way.
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const { shipId, truckRequirementId } = await createShipWithRequirement(app, owner.accessToken, {
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+      ],
+    });
+
+    const rejectedDriverId = await createDriver(app, owner.accessToken, {
+      phone: '+92 300 0000011',
+    });
+    const rejected = await createAssignment(
+      app,
+      owner.accessToken,
+      truckRequirementId,
+      rejectedDriverId,
+    );
+    await request(app)
+      .patch(`/api/v1/assignments/${rejected.body.id}/reject`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ reason: 'Unavailable' });
+
+    const withdrawnDriverId = await createDriver(app, owner.accessToken, {
+      phone: '+92 300 0000012',
+    });
+    const withdrawn = await createAssignment(
+      app,
+      owner.accessToken,
+      truckRequirementId,
+      withdrawnDriverId,
+    );
+    await request(app)
+      .patch(`/api/v1/assignments/${withdrawn.body.id}/withdraw`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    const firstDriverId = await createDriver(app, owner.accessToken, { phone: '+92 300 0000013' });
+    const first = await createAssignment(app, owner.accessToken, truckRequirementId, firstDriverId);
+    await request(app)
+      .patch(`/api/v1/assignments/${first.body.id}/confirm`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    const secondDriverId = await createDriver(app, owner.accessToken, {
+      phone: '+92 300 0000014',
+    });
+    const second = await createAssignment(
+      app,
+      owner.accessToken,
+      truckRequirementId,
+      secondDriverId,
+    );
+    await request(app)
+      .patch(`/api/v1/assignments/${second.body.id}/confirm`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    // Fully staffed (2/2) — dispatcher confirms the ship.
+    await request(app)
+      .patch(`/api/v1/ships/${shipId}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'RECRUITING' });
+    const confirmShip = await request(app)
+      .patch(`/api/v1/ships/${shipId}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'CONFIRMED' });
+    expect(confirmShip.status).toBe(200);
+
+    // One confirmed driver cancels — now short (1/2), despite two terminal
+    // rows and one still-CONFIRMED row also on the books for this
+    // requirement.
+    await request(app)
+      .patch(`/api/v1/assignments/${first.body.id}/cancel`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ reason: 'Truck broke down' });
+
+    const ship = await request(app)
+      .get(`/api/v1/ships/${shipId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(ship.body.status).toBe('RECRUITING');
+    expect(ship.body.truckRequirements[0].confirmedCount).toBe(1);
+  });
 });
 
 describe('assignment attempts', () => {
@@ -348,6 +437,9 @@ describe('assignment attempts', () => {
     expect(response.body.notes).toBe('Went to voicemail');
     expect(response.body.id).toEqual(expect.any(String));
     expect(response.body.attemptedAt).toEqual(expect.any(String));
+    // A human-recorded attempt never carries a provider — only Phase 4's
+    // voice worker sets this (see assignments.service.ts's AttemptActor).
+    expect(response.body.provider).toBeNull();
     // The endpoint's own resource is the attempt — it must not also carry
     // assignment-shaped fields.
     expect(response.body.status).toBeUndefined();
@@ -360,6 +452,32 @@ describe('assignment attempts', () => {
     expect(assignment.body.attempts).toHaveLength(1);
     expect(assignment.body.attempts[0].id).toBe(response.body.id);
     expect(assignment.body.attempts[0].outcome).toBe('NO_ANSWER');
+  });
+
+  it('rejects SYSTEM_ERROR as an outcome — reserved for Phase 4 CALL-E, not a human dispatcher', async () => {
+    // SYSTEM_ERROR describes an automated call platform's own failure, not
+    // something a dispatcher can honestly observe on a call they placed
+    // themselves. The frontend never offers it as a choice, but that's a
+    // UI courtesy, not enforcement — this proves the contract layer
+    // (packages/contracts's logAttemptRequestSchema) rejects it directly,
+    // regardless of what a scripted or malicious client sends.
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const { truckRequirementId } = await createShipWithRequirement(app, owner.accessToken);
+    const driverId = await createDriver(app, owner.accessToken);
+    const created = await createAssignment(app, owner.accessToken, truckRequirementId, driverId);
+
+    const response = await request(app)
+      .post(`/api/v1/assignments/${created.body.id}/attempts`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ outcome: 'SYSTEM_ERROR', notes: 'Not a real system failure' });
+
+    expect(response.status).toBe(400);
+
+    const assignment = await request(app)
+      .get(`/api/v1/assignments/${created.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(assignment.body.attempts).toHaveLength(0);
   });
 });
 
@@ -477,6 +595,41 @@ describe('assignments tenant isolation', () => {
 });
 
 describe('assignments concurrency', () => {
+  it('under concurrent reject requests for the same assignment, exactly one succeeds and exactly one attempt is recorded', async () => {
+    // rejectAssignment's status update and its attempt-log write used to be
+    // two independent statements rather than one atomic unit — this test
+    // guards the observable half of that: the winning request's update and
+    // attempt-create must always land together, never producing an orphan
+    // attempt row from a request that actually lost the race.
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const { truckRequirementId } = await createShipWithRequirement(app, owner.accessToken);
+    const driverId = await createDriver(app, owner.accessToken);
+    const created = await createAssignment(app, owner.accessToken, truckRequirementId, driverId);
+
+    const attempts = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        request(app)
+          .patch(`/api/v1/assignments/${created.body.id}/reject`)
+          .set('Authorization', `Bearer ${owner.accessToken}`)
+          .send({ reason: 'Driver unresponsive' }),
+      ),
+    );
+
+    const succeeded = attempts.filter((r) => r.status === 200);
+    const conflicted = attempts.filter((r) => r.status === 409);
+    expect(succeeded).toHaveLength(1);
+    expect(conflicted).toHaveLength(4);
+    expect(attempts.every((r) => r.status !== 500)).toBe(true);
+
+    const finalAssignment = await request(app)
+      .get(`/api/v1/assignments/${created.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(finalAssignment.body.status).toBe('REJECTED');
+    expect(finalAssignment.body.attempts).toHaveLength(1);
+    expect(finalAssignment.body.attempts[0].outcome).toBe('REJECTED');
+  });
+
   it('under concurrent confirm requests for the same assignment, exactly one succeeds and no request 500s', async () => {
     const app = buildApp();
     const owner = await registerOrganization(app);
@@ -502,6 +655,62 @@ describe('assignments concurrency', () => {
       .get(`/api/v1/drivers/${driverId}`)
       .set('Authorization', `Bearer ${owner.accessToken}`);
     expect(driver.body.availability).toBe('CONFIRMED');
+  });
+
+  it('under concurrent ship-cancel and assignment-cancel requests, neither 500s and the ship ends up CANCELLED', async () => {
+    // updateShipStatus's transaction locks Ship first, then cascades into
+    // Assignment/Driver. cancelAssignment's transaction used to lock
+    // Assignment then Driver then (conditionally, via revertShipIfNowShort)
+    // Ship — the exact reverse order. Firing both concurrently against the
+    // same ship/assignment pair is precisely Postgres's deadlock condition
+    // (SQLSTATE 40P01, surfaced by Prisma as P2034): before cancelAssignment
+    // was made to lock the Ship row first too, this reliably produced a 500
+    // on one of the two requests under load.
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const { shipId, truckRequirementId } = await createShipWithRequirement(app, owner.accessToken, {
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 },
+      ],
+    });
+    const driverId = await createDriver(app, owner.accessToken);
+    const created = await createAssignment(app, owner.accessToken, truckRequirementId, driverId);
+    await request(app)
+      .patch(`/api/v1/assignments/${created.body.id}/confirm`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    await request(app)
+      .patch(`/api/v1/ships/${shipId}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'RECRUITING' });
+    await request(app)
+      .patch(`/api/v1/ships/${shipId}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'CONFIRMED' });
+
+    const [cancelShip, cancelAssignmentResponse] = await Promise.all([
+      request(app)
+        .patch(`/api/v1/ships/${shipId}/status`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ status: 'CANCELLED' }),
+      request(app)
+        .patch(`/api/v1/assignments/${created.body.id}/cancel`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ reason: 'Truck broke down' }),
+    ]);
+
+    expect(cancelShip.status).not.toBe(500);
+    expect(cancelAssignmentResponse.status).not.toBe(500);
+    // Whichever transaction's Ship lock commits first wins; the other,
+    // once unblocked, finds the assignment already terminal and reports a
+    // clean 409 instead of double-cancelling it — either outcome is
+    // correct, a 500 from either request is not.
+    expect(cancelShip.status).toBe(200);
+    expect([200, 409]).toContain(cancelAssignmentResponse.status);
+
+    const ship = await request(app)
+      .get(`/api/v1/ships/${shipId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(ship.body.status).toBe('CANCELLED');
   });
 });
 
@@ -642,5 +851,184 @@ describe('ship + truck requirement side effects from assignments', () => {
       .get(`/api/v1/drivers/${driverId}`)
       .set('Authorization', `Bearer ${owner.accessToken}`);
     expect(driver.body.availability).toBe('ON_CALL');
+  });
+
+  it('rejects creating a new assignment against a cancelled or completed ship', async () => {
+    // Regression test: createAssignment previously had no ship-status
+    // guard at all. A ship's own cascade (cascadeShipCancellation/
+    // cascadeShipCompletion) only touches assignments that existed at the
+    // moment it ran — a brand-new assignment created afterward against
+    // the same (now-terminal) requirement was invisible to it, so it could
+    // be created and even confirmed, permanently marking a driver
+    // CONFIRMED/unavailable against a shipment that will never move again.
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const driverId = await createDriver(app, owner.accessToken);
+
+    const cancelled = await createShipWithRequirement(app, owner.accessToken);
+    await request(app)
+      .patch(`/api/v1/ships/${cancelled.shipId}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'CANCELLED' });
+    const onCancelledShip = await createAssignment(
+      app,
+      owner.accessToken,
+      cancelled.truckRequirementId,
+      driverId,
+    );
+    expect(onCancelledShip.status).toBe(409);
+
+    const completed = await createShipWithRequirement(app, owner.accessToken);
+    await request(app)
+      .patch(`/api/v1/ships/${completed.shipId}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'RECRUITING' });
+    await request(app)
+      .patch(`/api/v1/ships/${completed.shipId}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'CONFIRMED' });
+    await request(app)
+      .patch(`/api/v1/ships/${completed.shipId}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'IN_PROGRESS' });
+    await request(app)
+      .patch(`/api/v1/ships/${completed.shipId}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'COMPLETED' });
+    const onCompletedShip = await createAssignment(
+      app,
+      owner.accessToken,
+      completed.truckRequirementId,
+      driverId,
+    );
+    expect(onCompletedShip.status).toBe(409);
+  });
+
+  it('under a concurrent confirm and a quantityNeeded reduction on the same requirement, the requirement never ends up short of its confirmed count', async () => {
+    // Regression test: updateTruckRequirement's quantityNeeded-floor guard
+    // used to be a plain, unlocked count() followed by a separate,
+    // unlocked update() — a concurrent confirmAssignment could land in the
+    // gap and the guard would never see it, silently leaving
+    // quantityNeeded below the number of drivers actually confirmed. Both
+    // createAssignment/confirmAssignment and updateTruckRequirement now
+    // take the same row lock on the truck requirement as their first step
+    // (lockTruckRequirementRow, ships.service.ts), so whichever operation
+    // acquires it first fully serializes against the other.
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const { shipId, truckRequirementId } = await createShipWithRequirement(app, owner.accessToken, {
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 },
+      ],
+    });
+    const driverId = await createDriver(app, owner.accessToken);
+    const created = await createAssignment(app, owner.accessToken, truckRequirementId, driverId);
+
+    const [confirmResponse, quantityUpdateResponse] = await Promise.all([
+      request(app)
+        .patch(`/api/v1/assignments/${created.body.id}/confirm`)
+        .set('Authorization', `Bearer ${owner.accessToken}`),
+      request(app)
+        .patch(`/api/v1/ships/${shipId}/truck-requirements/${truckRequirementId}`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ quantityNeeded: 0 }),
+    ]);
+
+    expect(confirmResponse.status).not.toBe(500);
+    expect(quantityUpdateResponse.status).not.toBe(500);
+
+    const ship = await request(app)
+      .get(`/api/v1/ships/${shipId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    const requirement = ship.body.truckRequirements[0];
+    // Whichever order the two operations actually landed in, the
+    // requirement must never end up claiming fewer trucks are needed than
+    // are already confirmed against it.
+    expect(requirement.quantityNeeded).toBeGreaterThanOrEqual(requirement.confirmedCount);
+  });
+
+  it('confirmedCount/pendingCount reflect only live assignments, not a requirement\'s full terminal history', async () => {
+    // Regression test for the SHIP_INCLUDE fix: these counts used to come
+    // from fetching every assignment row ever created against a
+    // requirement (including REJECTED/WITHDRAWN/CANCELLED ones) and
+    // filtering in JS; they now come from a `groupBy` query filtered to
+    // CONFIRMED/PENDING in the WHERE clause instead. Both approaches
+    // should agree on the final numbers — this pins that down directly by
+    // deliberately building up terminal history on the same requirement
+    // before asserting the live counts.
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const { truckRequirementId, shipId } = await createShipWithRequirement(
+      app,
+      owner.accessToken,
+      { truckRequirements: [{ destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 3 }] },
+    );
+
+    const rejectedDriverId = await createDriver(app, owner.accessToken, { phone: '+92 300 0000001' });
+    const rejected = await createAssignment(
+      app,
+      owner.accessToken,
+      truckRequirementId,
+      rejectedDriverId,
+    );
+    await request(app)
+      .patch(`/api/v1/assignments/${rejected.body.id}/reject`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ reason: 'Unavailable' });
+
+    const withdrawnDriverId = await createDriver(app, owner.accessToken, { phone: '+92 300 0000002' });
+    const withdrawn = await createAssignment(
+      app,
+      owner.accessToken,
+      truckRequirementId,
+      withdrawnDriverId,
+    );
+    await request(app)
+      .patch(`/api/v1/assignments/${withdrawn.body.id}/withdraw`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    const cancelledDriverId = await createDriver(app, owner.accessToken, { phone: '+92 300 0000003' });
+    const cancelled = await createAssignment(
+      app,
+      owner.accessToken,
+      truckRequirementId,
+      cancelledDriverId,
+    );
+    await request(app)
+      .patch(`/api/v1/assignments/${cancelled.body.id}/confirm`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    await request(app)
+      .patch(`/api/v1/assignments/${cancelled.body.id}/cancel`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ reason: 'Truck broke down' });
+
+    const confirmedDriverId = await createDriver(app, owner.accessToken, { phone: '+92 300 0000004' });
+    const confirmed = await createAssignment(
+      app,
+      owner.accessToken,
+      truckRequirementId,
+      confirmedDriverId,
+    );
+    await request(app)
+      .patch(`/api/v1/assignments/${confirmed.body.id}/confirm`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    const pendingDriverId = await createDriver(app, owner.accessToken, { phone: '+92 300 0000005' });
+    await createAssignment(app, owner.accessToken, truckRequirementId, pendingDriverId);
+
+    const ship = await request(app)
+      .get(`/api/v1/ships/${shipId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(ship.body.truckRequirements[0].confirmedCount).toBe(1);
+    expect(ship.body.truckRequirements[0].pendingCount).toBe(1);
+
+    const listResponse = await request(app)
+      .get('/api/v1/ships')
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    const listedRequirement = listResponse.body.items.find(
+      (s: { id: string }) => s.id === shipId,
+    ).truckRequirements[0];
+    expect(listedRequirement.confirmedCount).toBe(1);
+    expect(listedRequirement.pendingCount).toBe(1);
   });
 });

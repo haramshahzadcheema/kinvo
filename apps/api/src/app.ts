@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import pinoHttp from 'pino-http';
 import { env } from './config/env';
 import type { Container } from './core/container';
+import { createAuthenticateMiddleware } from './core/middleware/authenticate';
 import { errorHandler } from './core/middleware/errorHandler';
 import { notFoundHandler } from './core/middleware/notFound';
 import { logger } from './core/logger';
@@ -15,6 +16,7 @@ import { createDriversRouter } from './modules/drivers/drivers.routes';
 import { createHealthRouter } from './modules/health/health.routes';
 import { createOrganizationsRouter } from './modules/organizations/organizations.routes';
 import { createShipsRouter } from './modules/ships/ships.routes';
+import { createVoiceRouters } from './modules/voice/voice.routes';
 
 export function createApp(container: Container): Express {
   const app = express();
@@ -44,12 +46,30 @@ export function createApp(container: Container): Express {
     }),
   );
 
+  const authenticate = createAuthenticateMiddleware(container.tokenRevocationStore);
+  const voiceRouters = createVoiceRouters(container.voiceService, container.voiceProvider, authenticate);
+
   app.use('/health', createHealthRouter(container.healthService));
-  app.use('/api/v1/auth', createAuthRouter(container.authService));
-  app.use('/api/v1/organizations', createOrganizationsRouter(container.organizationsService));
-  app.use('/api/v1/ships', createShipsRouter(container.shipsService));
-  app.use('/api/v1/drivers', createDriversRouter(container.driversService));
-  app.use('/api/v1/assignments', createAssignmentsRouter(container.assignmentsService));
+  // Public, unauthenticated — see voice.routes.ts for why. Mounted before
+  // the authenticated API routes so it's obviously not behind any of them.
+  // The router itself defines the `/call-e` path, so this mounts at
+  // `/webhooks`, not `/webhooks/call-e` (which would double up the segment).
+  app.use('/webhooks', voiceRouters.webhookRouter);
+  app.use('/api/v1/auth', createAuthRouter(container.authService, authenticate));
+  app.use(
+    '/api/v1/organizations',
+    createOrganizationsRouter(container.organizationsService, authenticate),
+  );
+  app.use('/api/v1/ships', createShipsRouter(container.shipsService, authenticate));
+  app.use('/api/v1/drivers', createDriversRouter(container.driversService, authenticate));
+  app.use(
+    '/api/v1/assignments',
+    createAssignmentsRouter(container.assignmentsService, authenticate),
+  );
+  // Mounted at the same base path as assignments, as a second router — see
+  // voice.routes.ts for why this stays a separate module instead of a
+  // change to assignments.routes.ts itself.
+  app.use('/api/v1/assignments', voiceRouters.actionsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

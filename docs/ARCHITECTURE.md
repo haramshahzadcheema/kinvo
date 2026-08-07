@@ -448,28 +448,79 @@ that matters for security) at signed-URL issuance.
 
 ## 10. CALL-E Integration Architecture
 
+This section originally sketched an assumed design before any CALL-E
+research existed (signature-verified webhooks, an `initiateCall`/
+`sendReminder`/`cancelCall` interface). Phase 4 began with a deep technical
+spike against the real `@call-e/calle` SDK (source, not just docs) before
+writing any production code — see "Phase 4 backend: CALL-E voice
+orchestration" in the Decisions log for what that spike found and why the
+design below differs from the original sketch in several material ways.
+
 ```
-core/voice-provider/
-  ├── VoiceProvider.ts       # interface: initiateCall(), sendReminder(), cancelCall()
-  ├── CallEAdapter.ts        # concrete implementation against CALL-E SDK
-  └── FakeVoiceProvider.ts   # for local dev / tests / demo fallback
+core/voice/
+  ├── VoiceProvider.ts            # interface: requestConfirmationCall(), getCallOutcome(), parseWebhookSignal()
+  ├── CallEAdapter.ts             # concrete implementation against @call-e/calle
+  ├── FakeVoiceProvider.ts        # in-memory double for tests / local dev without a CALL-E account
+  ├── confirmationResultSchema.ts # the JSON Schema sent to CALL-E as resultSchema
+  └── outcomeTranslation.ts       # pure CALL-E Call -> Kinvo VoiceCallOutcome mapping (unit tested directly)
+
+core/queue/
+  ├── queueConnection.ts   # BullMQ's own ioredis connection (maxRetriesPerRequest: null — see §14)
+  └── queues.ts            # voice-calls, voice-webhook-events, voice-reconciliation queue definitions
+
+modules/voice/
+  ├── voice.service.ts     # placeCallForAssignment, executeCallPlacement, processWebhookSignal, reconcileStaleAttempts
+  ├── voice.controller.ts  # HTTP handlers for both the dispatcher action and the webhook intake
+  ├── voice.routes.ts      # POST /assignments/:id/voice-calls (authenticated) + POST /webhooks/call-e (public)
+  └── voice.workers.ts     # BullMQ Worker registration, run only from apps/api/src/worker.ts
 ```
 
-- Business logic (e.g. `ships.recruit()`) depends on the `VoiceProvider`
-  interface only, injected via the composition root. Swapping providers, or
-  running the entire demo against `FakeVoiceProvider` if the live sandbox
-  flakes mid-demo, is a one-line config change.
-- **Webhook intake**: `POST /webhooks/call-e` verifies the provider's
-  signature header, does the absolute minimum (persist raw event,
-  acknowledge 200), and enqueues a `processCallEvent` job. All state
-  transitions (assignment confirmed, driver rejected, escalate to Yellow
-  Zone) happen in the worker, idempotently (keyed on provider event ID —
-  webhooks _will_ be delivered more than once).
-- Escalation classification (routine vs. Yellow Zone) is whatever signal
-  CALL-E's payload gives us (e.g. confidence score / explicit escalation
-  flag) mapped to a `YellowZoneItem` creation — kept as a single mapping
-  function so the classification rule can change without touching the
-  webhook plumbing.
+- Business logic depends only on the `VoiceProvider` interface, injected via
+  the composition root (`core/container.ts`) — CALL-E is the first
+  implementation, not the only one this was designed for. The interface
+  deliberately hides every CALL-E-specific concept (Calls vs. Goal Runs,
+  recipients, `structured_result`, ...) behind Kinvo's own 6-state
+  `VoiceCallOutcome` vocabulary (`confirmed | declined | unreachable |
+  ambiguous | system_error | pending`).
+- **Webhooks carry no signature.** Verified three independent ways during
+  the spike (the current docs, a dated changelog entry, and a
+  `@deprecated` HMAC verifier still shipped in the SDK with an explicit
+  "not signed" comment) — directly contradicting the original design's
+  signature-verification assumption. The real security model: treat every
+  webhook delivery as an untrusted, unauthenticated ping that names a call
+  id, then re-fetch that call's state from CALL-E over the authenticated
+  API connection before acting on anything. `POST /webhooks/call-e`
+  therefore does the minimum — parse just enough to know which call to
+  check, enqueue a job, acknowledge 200 — and never reads or trusts the
+  body's own claims about call status.
+- **No separate "in-flight call" concept was needed on top of
+  `AssignmentAttempt`.** A `VoiceCallPlacement` row is written the moment a
+  call is placed (before any outcome is known) and is the thing
+  reconciliation and crash-recovery query against; the actual
+  `AssignmentAttempt` is only created once a terminal outcome exists,
+  exactly mirroring how a human dispatcher's own `logAttempt` already
+  worked. This is what let Phase 4 extend `assignments.service.ts`'s
+  existing `confirmAssignment`/`rejectAssignment`/`logAttempt` (via a new
+  `AttemptActor` discriminated union — `{ source: 'human' }` vs.
+  `{ source: 'system', provider, externalCallId }`) instead of building a
+  parallel state machine next to it.
+- **Idempotency is four independent, defense-in-depth layers**, documented
+  in full in `voice.service.ts`'s module comment: the BullMQ job id, CALL-E's
+  own `idempotencyKey` (derived from a per-assignment-per-round
+  `callAttemptRef`, not a random value, so a genuine retry after an earlier
+  round already resolved is never mistaken for a duplicate of the first),
+  `AssignmentAttempt.externalCallId`'s unique constraint, and
+  `VoiceWebhookEvent`'s id-as-primary-key. Verified under true concurrency
+  (two different terminal webhook event types for the same call, processed
+  by two different worker slots at the same instant), not just sequential
+  replay — see `test/integration/voice.test.ts`.
+- **Reconciliation is Kinvo's own timeout policy, not CALL-E's.** A call
+  still `pending` when reconciliation checks it is left alone if it's
+  within `VOICE_RECONCILE_STALE_AFTER_MINUTES`; past that budget, Kinvo
+  itself forces a `system_error` outcome rather than waiting forever — this
+  matters because CALL-E's `canceled` status has no corresponding webhook
+  event at all (verified from the OpenAPI schema), so that one terminal
+  state can only ever be discovered by polling.
 
 ## 11. Notification Architecture
 
@@ -538,29 +589,64 @@ leak in production responses; full detail goes to the log, keyed by
 
 ## 14. Background Jobs
 
-Redis + BullMQ. Queues:
+Redis + BullMQ, built out in Phase 4 for the CALL-E voice orchestration
+subsystem — see §10 and the Decisions log for the full design and the
+research behind it. Queues (`apps/api/src/core/queue/queues.ts`):
 
-- `outbound-calls` — fan-out one job per driver when a ship enters
-  `RECRUITING`; rate-limited concurrency (don't blow past CALL-E's own rate
-  limits).
-- `webhook-events` — processes CALL-E callbacks idempotently.
-- `campaigns` — fires approved reminder campaigns at `scheduledAt`
-  (delayed jobs), one job per confirmed assignment.
-- `notifications-fanout` — persists + broadcasts events from the internal
-  bus (kept as a queue rather than fire-and-forget so a Socket.io hiccup
-  doesn't lose a notification).
+- `voice-calls` — one job per automated confirmation call to place, enqueued
+  by `voice.service.ts`'s `placeCallForAssignment`; job id is derived from a
+  per-assignment-per-round `callAttemptRef` so a duplicate enqueue for the
+  same round is a safe no-op at the queue layer, before it ever reaches
+  CALL-E.
+- `voice-webhook-events` — processes an already-parsed CALL-E webhook signal;
+  job id is the provider's own event id, so a duplicate delivery never even
+  enqueues a second job.
+- `voice-reconciliation` — a single recurring sweep job (via BullMQ's
+  `upsertJobScheduler`, not a hand-rolled `setInterval`) that re-checks
+  placements which never got a terminal webhook and force-times-out ones
+  stuck well past `VOICE_RECONCILE_STALE_AFTER_MINUTES`.
+
+`campaigns` and `notifications-fanout`, mentioned in an earlier draft of
+this section, are not part of Phase 4 — they belong to features (reminder
+campaigns, the internal notification bus) that haven't been built yet and
+would be added as their own queues on top of this same BullMQ setup when
+their phase arrives, not retrofitted into the voice queues above.
 
 **BullMQ needs its own Redis connection, not the Phase 0 health-check/cache
 one.** `apps/api/src/core/redis.ts`'s singleton is configured with
 `maxRetriesPerRequest: 1`; BullMQ requires `maxRetriesPerRequest: null` on
 any connection it uses for blocking commands and throws at startup
-otherwise. Create a separate `ioredis` connection for queues/workers when
-Phase 4 lands — don't reuse the existing singleton. (Flagged in the Phase 0
-audit, `docs/PHASE_0_AUDIT.md` finding H3.)
+otherwise. This was flagged in the Phase 0 audit (`docs/PHASE_0_AUDIT.md`
+finding H3) well before Phase 4 existed; `core/queue/queueConnection.ts` is
+that flag acted on — a second, dedicated `ioredis` connection used by
+nothing else.
 
-Workers run as a separate process/container from the API from day one, even
-in Phase 1 scaffolding — trivial to do early, expensive to retrofit once code
-assumes it's always in-request.
+Workers run as a separate process/container from the API, exactly as
+planned back in Phase 1 scaffolding — `apps/api/src/worker.ts` is a second
+entrypoint into the *same* `apps/api` package (not a separate `apps/worker`
+package: extracting shared core code to support that would have been a much
+larger, riskier restructuring than a worker process actually required),
+deployed as a second `docker-compose` service built from the same image
+with a different command (`dev:worker` instead of `dev`).
+
+**ESM/CJS interop gap, found only by actually running the stack (resolved
+2026-08-06).** `@call-e/calle` ships ESM-only (an `import` condition only in
+its `package.json` `exports` map, no `require`), while `apps/api` itself has
+no `"type": "module"` and runs under `tsx`/`tsc`'s CommonJS output. A
+top-level `import { CalleClient } from '@call-e/calle'` compiles to a
+`require()` call and crashes with `ERR_PACKAGE_PATH_NOT_EXPORTED` the moment
+the module loads — invisible to `tsc --noEmit` and to Vitest (neither
+actually performs a real CJS `require()` of that package), and only
+surfaced when the Docker `worker`/`api` containers were started for real.
+Fixed in `CallEAdapter.ts` with a lazy, memoized dynamic `import()` — this
+keeps `createCallEAdapter` synchronous (so `container.ts`'s construction and
+every test call site stay untouched) while still using the
+officially-supported Node interop path for loading an ESM-only package from
+CommonJS. The lesson generalizes: any future provider adapter pulling in an
+ESM-only SDK needs the same pattern, and `tsc`/`vitest` passing is not
+sufficient evidence that a real process boots — this is exactly why task
+tracking for this phase included a live Docker verification step, not just
+a green test suite.
 
 ## 15. Security Considerations
 
@@ -612,7 +698,9 @@ REDIS_URL
 JWT_ACCESS_SECRET, JWT_ACCESS_TTL
 REFRESH_TOKEN_TTL_DAYS, REFRESH_TOKEN_COOKIE_NAME
 CORS_ORIGIN
-CALL_E_API_KEY, CALL_E_WEBHOOK_SECRET, CALL_E_BASE_URL
+CALLE_API_KEY, CALLE_BASE_URL (optional)
+VOICE_CALLS_CONCURRENCY, VOICE_WEBHOOK_CONCURRENCY
+VOICE_RECONCILE_STALE_AFTER_MINUTES, VOICE_RECONCILE_INTERVAL_MINUTES
 STORAGE_PROVIDER (s3|cloudinary), STORAGE_BUCKET, STORAGE_ACCESS_KEY, STORAGE_SECRET_KEY, STORAGE_REGION
 SENTRY_DSN (optional, Phase 7)
 ```
@@ -623,9 +711,20 @@ validated at boot exactly as specified. Only `JWT_ACCESS_SECRET` and
 `JWT_REFRESH_TTL` pair, because refresh tokens are **not** JWTs: per §6,
 they're opaque random values, stored hashed, compared by hash lookup. A
 "refresh token secret" would imply verifying a signature, which is the
-wrong mental model for an opaque-token-plus-rotation design. `CALL_E_*` and
-`STORAGE_*` remain unimplemented, correctly — they belong to Phase 4 and a
-later documents/upload phase respectively, not Phase 1.
+wrong mental model for an opaque-token-plus-rotation design. `STORAGE_*`
+remains unimplemented, correctly — it belongs to a later documents/upload
+phase, not Phase 1.
+
+**Status (Phase 4):** the CALL-E vars landed with a different name and
+shape than this section originally sketched, once real research replaced
+assumption. No `CALL_E_WEBHOOK_SECRET` exists at all — CALL-E's webhook
+deliveries carry no signature (verified from the SDK source, not the
+docs; see §10), so there is nothing to hold a secret for. `CALLE_API_KEY`
+is required everywhere except the test environment (enforced by a schema
+`.refine`, not left to convention) since `core/container.ts` wires a real
+`CallEAdapter` in every other environment and a `FakeVoiceProvider` in
+test. `CALLE_BASE_URL` stays optional — only needed to override CALL-E's
+default API host.
 
 ## 18. Testing Strategy
 
@@ -676,9 +775,61 @@ GitHub Actions:
 - `Call` will be the highest-volume, fastest-growing table by a wide margin
   (every ring, every webhook event) — plan for time-based partitioning or
   periodic archival before it becomes a problem, not after.
-- Redis: also backs rate limiting and pub/sub, so its own availability
-  becomes load-bearing once you're past one API instance — run it managed,
-  not on a laptop-grade container, past Phase 1.
+- **Redis is a hard, day-one dependency for every authenticated request, not
+  a scale-later concern (updated 2026-08-06).** This section originally
+  framed Redis's availability as "load-bearing once you're past one API
+  instance," which was accurate when its only jobs were rate limiting and
+  health checks — an outage degraded those, nothing else. That stopped
+  being true the moment JWT revocation shipped (see the Phase 3 final
+  pre-merge remediation section above): `authenticate.ts` now calls the
+  Redis-backed `TokenRevocationStore` on **every single authenticated
+  request**, and — deliberately, for the right security reason — **fails
+  closed** (`503`) if that call errors, rather than silently skipping the
+  revocation check. A revocation check that silently no-ops during a Redis
+  blip would mean a role change or member removal simply doesn't take
+  effect for as long as the outage lasts, which defeats the entire point of
+  building it. So the tradeoff is correct; what changed is that it moved
+  Redis from "degrades a convenience feature" to "single instance of Redis
+  going down takes the whole API down," with a single instance, no
+  failover, and `maxRetriesPerRequest: 1` (`core/redis.ts`) — appropriate
+  for local dev, not for production, as-is.
+
+  **Mitigation: run Redis as a managed service with built-in automatic
+  failover**, not a bespoke self-hosted Sentinel cluster — consistent with
+  this document's existing "managed Postgres, not self-hosted" philosophy
+  (§16): automated failover and operational simplicity are worth more here
+  than the marginal hosting-cost savings of running it yourself, and this
+  product's current scale doesn't justify the operational overhead of
+  running and monitoring a 3+-node Sentinel quorum by hand. Any of the
+  following satisfy this (pick based on existing cloud-provider
+  relationship, same "RDS/Neon/Supabase-class" flexibility already applied
+  to Postgres in §16):
+  - **AWS ElastiCache for Redis, Multi-AZ with automatic failover enabled**
+    — the natural choice if Postgres is already RDS; failover to a replica
+    typically completes in well under a minute, and ElastiCache manages the
+    endpoint DNS so `REDIS_URL` doesn't need to change on failover.
+  - **Upstash** — serverless Redis with built-in high availability and a
+    generous free tier; a reasonable default if there's no existing AWS
+    footprint, since it needs no cluster to provision or patch.
+  - **Redis Cloud (Redis Inc.'s own managed offering)** — comparable HA
+    guarantees, worth a look if pricing or region coverage favor it over
+    the two above.
+
+  Do **not** solve this by weakening `authenticate.ts`'s fail-closed
+  behavior (e.g. falling back to "treat as not revoked" on a Redis error)
+  — that silently reopens the exact staleness window this feature exists to
+  close, trading a rare, honest `503` for a much worse, silent security
+  regression.
+
+  **Left as a follow-up, not required by this decision:** `core/redis.ts`'s
+  `maxRetriesPerRequest: 1` means a single transient blip — even one a
+  managed Multi-AZ failover would ride through in seconds — can still
+  surface as a user-visible `503` before the connection recovers. Once a
+  managed HA Redis is in place, revisit this constant (a small bounded
+  retry count, or `ioredis`'s built-in exponential-backoff `retryStrategy`)
+  to trade a few hundred milliseconds of added latency during a failover
+  for fewer spurious `503`s — not done here, since it's an independent
+  tuning decision from the HA topology itself and shouldn't block on it.
 
 ---
 
@@ -1765,3 +1916,327 @@ success, never reads the mutation's return value — making this a safe,
 non-breaking correction rather than a real API contract risk. Now returns
 the created `AssignmentAttemptDto` directly; confirmed live in the browser
 that the UI updates identically either way.
+
+## Phase 3 final pre-merge remediation
+
+A second, more adversarial pre-merge audit (explicitly instructed to try to
+REJECT the merge) found two new blocker-class concurrency defects the
+hardening pass above had missed, plus several other issues spanning
+concurrency, security, performance, and API correctness. Every finding was
+investigated from the actual code (not from this document's own claims),
+fixed, covered with a new regression test, and the fix's blast radius was
+explicitly checked against every dependent caller before moving on — full
+suite, `typecheck`, and `lint --max-warnings=0` stayed green after each one.
+An independent, from-scratch re-audit (a fresh reviewer with no memory of
+this session's own fixes) then verified all of it and found two further
+Medium-severity gaps, also fixed below. Final tally: 165/165 tests passing,
+clean `typecheck`/`lint` across all three workspaces, verified live against
+the running Docker stack.
+
+**Blocker 5 — `updateShipStatus` and `cancelAssignment`/`markNoShow` could
+deadlock under real concurrent load, despite Blocker 4's earlier
+transaction-wrapping fix (resolved 2026-08-06).** Wrapping each function's
+sequence in its own `$transaction` (Blocker 4) fixed crash-safety but left
+their *lock acquisition order* inverted: `updateShipStatus` locks
+Ship → Assignment → Driver; `cancelAssignment`/`markNoShow` locked
+Assignment → Driver → (conditionally) Ship. Two transactions each wanting a
+lock the other already holds is Postgres's definition of a deadlock
+(SQLSTATE `40P01`, Prisma error `P2034`) — confirmed reachable by tracing
+both code paths' lock order line-by-line, not assumed. Fixed by having
+`cancelAssignment`/`markNoShow` take a `FOR UPDATE` lock on the parent Ship
+row first, unconditionally, pinning the order to Ship → Assignment → Driver
+on every path through the function (`lockShipRow`,
+`assignments.service.ts`). `P2034` also now maps to a `409 CONCURRENT_UPDATE`
+in `errorHandler.ts` as defense-in-depth, rather than falling through to a
+generic 500. New concurrency test fires both operations at the same
+ship/assignment pair simultaneously and asserts neither ever 500s.
+
+**Blocker 6 — TOCTOU race in `updateDriver`'s active-assignment guard
+(resolved 2026-08-06).** The guard's read (does this driver have a live
+`CONFIRMED` assignment?) and the eventual write were two separate, unlocked
+statements — a concurrent `confirmAssignment`/`cancelAssignment` could land
+in the gap, letting a plain availability edit silently overwrite a driver
+that had just become genuinely committed to a job (or vice versa). Fixed by
+locking the driver row (`FOR UPDATE`) as the transaction's first statement,
+re-checking the guard inside the same transaction as the write. Verified
+this introduces no new deadlock cycle: the lock only ever touches Driver,
+never Assignment or Ship, so it can't be the reverse half of a cycle with
+`confirmAssignment` (Assignment → Driver) or the Ship-first functions above.
+
+**Non-blocker: `rejectAssignment` was not transactional (resolved
+2026-08-06).** Its conditional status update and its attempt-log write were
+two independent statements, unlike the identically-shaped `confirmAssignment`
+right above it. Wrapped in one `$transaction`, matching the sibling function.
+
+**Non-blocker: the audit log was structured `pino` output only, not
+persisted or queryable (resolved 2026-08-06).** Added a new `AuditLogEntry`
+table and made `AuditLogger.record` async and DB-persisting, with an
+optional `tx` parameter so a caller already inside a transaction (e.g.
+`revertShipIfNowShort`'s ship-status revert) can commit its audit entry
+atomically with the business write it describes. Deliberately has **no**
+foreign keys to `User`/`Organization` — a departure from this schema's usual
+"add an FK for every actor reference" convention, made because an audit
+trail must remain forensically meaningful even after the actor's membership
+is removed or (in a future feature) the organization itself is deleted; an
+FK with `onDelete: Cascade` would silently erase the very trail describing
+that deletion.
+
+**Non-blocker: JWT access tokens carried stale role/membership claims for
+up to `JWT_ACCESS_TTL` after a role change or removal, with no revocation
+path (resolved 2026-08-06).** `authenticate.ts` never re-resolves role from
+the database (a deliberate Phase 1 tradeoff — see §6a), so a token issued
+just before a demotion or removal stayed fully valid, at the old privilege
+level, until it naturally expired. Closed with a Redis-backed revocation
+store (`token-revocation.ts`): `updateMemberRole`/`removeMember` mark a
+membership revoked; `authenticate.ts` checks every request against it,
+failing closed (503) if Redis itself is unreachable rather than silently
+skipping the check. A real precision bug was caught and fixed while
+building this: JWT's standard `iat` claim is whole-seconds only, and
+comparing it against a millisecond-precision revocation timestamp
+incorrectly rejected a token minted in the same wall-clock second as the
+revocation (the common case — a client refreshing immediately after a role
+change) — caught by a failing integration test before it shipped, fixed by
+signing a custom millisecond-precision `issuedAtMs` claim instead of relying
+on `iat`.
+
+**Non-blocker: `SHIP_INCLUDE` fetched every historical assignment just to
+reduce two counts in JS (resolved 2026-08-06).** Scaled with a requirement's
+entire lifetime assignment volume (including terminal
+REJECTED/WITHDRAWN/CANCELLED rows) instead of its currently-live rows.
+Replaced with `loadRequirementCounts`, a single `groupBy` query filtered to
+`CONFIRMED`/`PENDING` and batched across an entire page of ships at once —
+one query per list response, not one per ship or per requirement.
+
+**Non-blocker: `SYSTEM_ERROR` attempt outcome had no server-side enforcement
+against human dispatchers (resolved 2026-08-06).** `SYSTEM_ERROR` is
+reserved for Phase 4's CALL-E webhook to report a call-platform failure —
+the frontend already excluded it from its outcome picker, but that's a UI
+courtesy, not enforcement; a direct request to `POST /assignments/:id/attempts`
+could still set it. Fixed at the contract layer: a new
+`humanLoggableAttemptOutcomeSchema` (`attemptOutcomeSchema.exclude(['SYSTEM_ERROR'])`)
+now backs the request schema, so the exclusion is enforced by Zod validation
+regardless of client. The frontend's outcome list is now derived from this
+same schema instead of a separately hand-maintained array.
+
+**Non-blocker: `apiClient.ts` had no request timeout (resolved
+2026-08-06).** A hung backend or dropped connection left every in-flight
+query/mutation pending indefinitely, with React Query never settling and no
+way for the UI to surface an error. Added `AbortSignal.timeout(15_000)`,
+translated to a genuine `ApiError` (distinguishing a timeout from a generic
+network failure) so every existing `isApiError(err) ? err.message : ...`
+call site gets a sensible message with no changes needed at the call site.
+
+**Independent re-audit finding — no ship-status guard on
+`createAssignment`/`confirmAssignment` (resolved 2026-08-06).** Neither
+function checked the parent ship's status. A ship's own cancellation/
+completion cascade only touches assignments that existed at the moment it
+ran — a brand-new assignment created against the same (now-terminal)
+requirement afterward was invisible to it, and could even be confirmed,
+permanently marking a driver `CONFIRMED`/unavailable against a shipment
+that will never move again, with no system-driven recovery path. Fixed with
+an `assertShipAcceptsAssignments` guard (rejects `COMPLETED`/`CANCELLED`) in
+both functions — proactively in `createAssignment`, and again as
+defense-in-depth inside `confirmAssignment`'s existing transaction.
+
+**Independent re-audit finding — TOCTOU race in `updateTruckRequirement`'s
+two business-rule guards (resolved 2026-08-06).** The destination/truckType
+lock and the quantityNeeded floor were each a plain `count()` followed by a
+separate, unlocked `update()` — unlike every other guard fixed in this
+remediation round, this one had no database constraint backstop either (the
+sibling `removeTruckRequirement` has its FK `Restrict` as a real safety
+net; this didn't). A concurrent `createAssignment`/`confirmAssignment`
+landing in the gap could silently violate the exact invariant the guard
+exists to enforce. Closed by having all three operations —
+`updateTruckRequirement`, `createAssignment`, and `confirmAssignment` —
+take the same `FOR UPDATE` lock on the truck requirement row
+(`lockTruckRequirementRow`) as their first step, so whichever one acquires
+it first fully serializes the others against it. Verified this introduces
+no new deadlock cycle: all three take this lock as their very first
+statement, before touching Assignment or Driver, so none of them can be
+holding a later-acquired resource while waiting on an earlier one held by a
+different transaction.
+
+**Both follow-ups flagged above have since been closed (2026-08-06).**
+`revertShipIfNowShort` now uses the same `loadRequirementCounts`/`groupBy`
+query as the `SHIP_INCLUDE` fix (exported from `ships.service.ts` and
+threaded through with `tx`, since this call runs inside
+`cancelAssignment`'s/`markNoShow`'s transaction) instead of fetching a
+ship's full historical assignment set — new regression test builds real
+terminal-status history (REJECTED/WITHDRAWN) alongside live CONFIRMED
+assignments on the same requirement and confirms the shortage check still
+reflects only the live ones. Separately, the Redis day-one-dependency
+question raised by JWT revocation is addressed in §20's Scaling Strategy
+above: run Redis as managed, HA-capable infrastructure (ElastiCache
+Multi-AZ / Upstash / Redis Cloud) rather than a single unmanaged instance,
+with `authenticate.ts`'s fail-closed behavior kept exactly as-is — the
+mitigation is in the infrastructure's availability, not in weakening the
+security guarantee.
+
+## Phase 4 backend: CALL-E voice orchestration
+
+Built research-first, at the user's explicit direction: a deep technical
+spike against the real `@call-e/calle` SDK (source code, not just
+documentation), then a from-scratch distributed-systems analysis of CALL-E
+as an external system (state machine, failure model, consistency model,
+concurrency, idempotency, recovery, security threat model), both completed
+and reported on *before* any Phase 4 production code was written. Several
+of the spike's findings directly contradicted this document's original,
+assumption-based §10/§14 sketches — see those sections above for the
+corrected design; this entry covers what the research found, why the
+design differs from the original sketch, and what was actually built and
+verified.
+
+**What the spike found that changed the design.** (1) CALL-E's webhook
+deliveries carry no signature — confirmed three independent ways (current
+docs, a dated changelog entry, and a `@deprecated` HMAC verifier still
+shipped in the SDK with an explicit "not signed" comment), directly
+contradicting the original signature-verification assumption. (2) The SDK
+exposes two API surfaces — ad-hoc Calls (webhook-capable, carries arbitrary
+`metadata`) and Goal Runs (poll-only, **no webhook mechanism exists
+anywhere in the schema**, requires authoring a reusable "Goal" through a
+separate tool first) — Calls was chosen as Phase 4's integration surface;
+Goal Runs is a tracked future migration, not a commitment made without
+verifying it first. (3) The SDK ships zero retry logic of its own — every
+network call site throws immediately on failure — which is why every
+`VoiceProvider.getCallOutcome` implementation must let transport errors
+propagate for BullMQ's own retry/backoff to handle, rather than absorbing
+them. (4) `CallStatus: canceled` has no corresponding webhook event type at
+all, which is why reconciliation (polling) is load-bearing, not a backstop
+for an already-complete webhook flow. (5) `@call-e/calle` ships ESM-only —
+this one wasn't caught by the spike; it surfaced only when the Docker
+stack was actually started for real (see §14's ESM/CJS interop entry).
+
+**Architectural decisions made in response, each with a concrete reason to
+prefer it over the obvious alternative:**
+
+- *Treat every webhook as an untrusted signal, never a source of truth.*
+  Given no signature exists, the only sound design is: extract just enough
+  from the delivery to know which call to check (an id), then re-fetch
+  that call's authoritative state over the already-authenticated API
+  connection. This is why `VoiceProvider.parseWebhookSignal` returns almost
+  nothing, and why `CallEAdapter`'s webhook-body schema validates down to
+  `{ id, type, data: { id } }` and nothing more.
+- *A separate `VoiceCallPlacement` record, not folding "in flight" into
+  `AssignmentAttempt`.* `AssignmentAttempt.outcome` is NOT NULL by design
+  (Phase 3) — an attempt is a *completed* fact, never a placeholder for one
+  still pending. Rather than widening that column's meaning, a new,
+  minimal table records the moment a call is placed; the actual
+  `AssignmentAttempt` is only created once a terminal outcome exists. This
+  is also what let reconciliation and crash-recovery work at all — without
+  a durable "we placed this call" record, nothing could answer "which
+  calls are we still waiting on?"
+- *Extending `assignments.service.ts`, not building a parallel state
+  machine.* A new `AttemptActor` discriminated union
+  (`{ source: 'human' }` vs. `{ source: 'system', provider,
+  externalCallId }`) lets the existing, already-hardened
+  `confirmAssignment`/`rejectAssignment`/`logAttempt` be called by the
+  voice worker without impersonating a human dispatcher, defaulting to
+  `{ source: 'human' }` for zero behavioral change at every existing HTTP
+  call site. This is the "existing codebase first" principle applied
+  directly: the alternative (a second confirm/reject/log path duplicating
+  Phase 3's transaction and locking logic) would have doubled the surface
+  area needing the same concurrency guarantees re-proven from scratch.
+- *A per-assignment-per-round `callAttemptRef`, not a random idempotency
+  key or a fixed one.* A fixed key (e.g. the assignment id alone) would
+  make a legitimate later retry — after an earlier round already resolved
+  UNREACHABLE and a dispatcher wants to try again — collide with the first
+  round's idempotency key and silently return the old, already-resolved
+  call. A random key per placement *attempt* (rather than per *round*)
+  would fail to collapse a genuine duplicate enqueue (two rapid clicks
+  before the first round resolves) into one real call. Deriving it from
+  the count of prior placements for that assignment gets both properties
+  right with no new schema.
+- *Four independent idempotency layers, not one.* BullMQ job id, CALL-E's
+  own idempotency key, `AssignmentAttempt.externalCallId`'s uniqueness, and
+  `VoiceWebhookEvent`'s id-as-primary-key each guard against a different
+  failure mode (duplicate enqueue, duplicate real API call, two different
+  terminal signals for the same call, literal duplicate delivery) — see
+  `voice.service.ts`'s module comment for the full mapping. Verified under
+  true concurrency, not just sequential replay: a self-audit pass after
+  the initial implementation found that two different terminal webhook
+  event types for the same call, processed by two different worker
+  concurrency slots at the same instant, could throw an unhandled unique-
+  constraint violation out of `applyVoiceOutcome`. Fixed by catching that
+  specific violation as an expected, benign race rather than an error, and
+  covered with a dedicated `Promise.all`-based concurrency test — the
+  earlier sequential version of the same test had not caught it.
+
+**Self-audit findings, fixed before this phase was called done:** (1) the
+new public `/webhooks/call-e` endpoint had no rate limiting, unlike every
+other public/unauthenticated endpoint in this codebase (auth, health) —
+added, sized generously relative to auth's since a real CALL-E account
+under load can legitimately fire many terminal events per minute. (2) the
+true-concurrency race described above. (3) `VoiceCallPlacement` was missing
+its foreign key to `Assignment` (inconsistent with `VoiceWebhookEvent`'s own
+relation to `AssignmentAttempt`) — added, `onDelete: Cascade` matching the
+existing precedent. (4) live verification against the actual Docker stack
+(not just `tsc`/Vitest, which cannot execute a real CommonJS `require()` of
+an ESM-only package) surfaced the `@call-e/calle` ESM/CJS interop crash
+documented in §14 — fixed with a lazy dynamic `import()`, then re-verified
+live: full org → ship → driver → assignment → voice-call flow exercised
+against the running stack, including the real `CallEAdapter` code path
+hitting CALL-E with a deliberately-invalid placeholder key and failing
+cleanly (a logged, retried `CalleAuthenticationError`, not a crash).
+
+**Final state (first gate):** 206/206 tests passing (166 pre-Phase-4 plus 40
+new — 18 pure-function unit tests for `outcomeTranslation`, 22 integration
+tests covering placement, HTTP surface, outcome resolution including true
+concurrency, and reconciliation), clean `typecheck`/`lint` across all three
+workspaces, verified live against the running Docker stack including the
+new `worker` service.
+
+**Product gap closed in the same audit round: Phase 4 had no UI.** The
+backend could place and resolve calls; nothing let a dispatcher trigger one,
+see one in progress, or tell an automated attempt apart from a manual one —
+`AssignmentAttemptDto` didn't even expose the `provider` column the schema
+already had. Closed by: adding `provider` to `AssignmentAttemptDto` and a
+new `pendingVoiceCall: { provider, placedAt } | null` to `AssignmentDto`
+(computed from an unresolved `VoiceCallPlacement`, the one piece of
+operational visibility a support engineer gets from the API without DB
+access); a "Call driver" button on `AssignmentRow.tsx` wired to the existing
+authenticated action endpoint; a live "Calling since HH:MM" indicator and a
+disabled/relabeled button state while a call is in flight; an "Automated ·
+call-e" badge on attempt history; and self-clearing polling
+(`refetchInterval`, gated on any row actually having a call in flight, so it
+never runs once nothing is pending) so the status updates without a manual
+refresh. Live-verified end to end via browser automation, including
+resolving the anomaly where the poll appeared not to fire — traced to
+`document.visibilityState === "hidden"` in the automation tool's own
+non-displayed pane, which is exactly the condition TanStack Query's
+`focusManager` is designed to suppress background polling for (the same
+behavior Gmail/Slack rely on); not a defect in the implementation.
+
+**Second gate audit — one more real defect found and fixed:
+`translateCallToOutcome` wasn't actually defensive against a malformed
+provider response (resolved 2026-08-07).** The function's own doc comment
+already promised "every branch resolves to a VoiceCallOutcome rather than
+throwing" — true for every `status` value, but not for a response whose
+`recipients` field was missing or wrong-shaped, which the SDK's compile-time
+`Call` type doesn't protect against at runtime. An uncaught `TypeError`
+there degrades two different ways depending on the caller: forever-repeating,
+never-resolving log spam from `reconcileStaleAttempts` (which catches and
+logs per-placement, but the malformed response never stops recurring), or a
+silently dead-lettered BullMQ job from `processWebhookSignal` (which has no
+such catch) — retried five times against a response shape that retrying
+can't fix. Fixed with a single outer `try/catch` around the whole
+translation, converting any unexpected exception into a terminal
+`system_error` outcome — the same reaction the function already gives a
+recognized-but-unrecognized status value. Three new unit tests cover it
+directly (missing `recipients`, a malformed entry inside `recipients`, and
+the existing malformed-`structuredResult` case, which was already safe via
+`zod`'s `safeParse` and needed no fix).
+
+**Considered and deliberately not changed:** no `restart` policy exists on
+any `docker-compose.yml` service (postgres, redis, api, worker, or web) —
+this predates Phase 4 and applies uniformly across the whole dev stack, not
+something Phase 4 introduced or that Phase 4's scope covers alone; adding it
+only to the two Phase 4 services would be an inconsistent, unjustified
+special case rather than a real fix. Left for whoever addresses it
+repo-wide, alongside the already-documented production-Dockerfile
+limitation in `apps/api/Dockerfile`'s own comment.
+
+**Final state (second gate):** 209/209 tests passing, clean
+`typecheck`/`lint`/`build` across all three workspaces, live-verified
+against the full Docker stack a second time (health, malformed webhook,
+duplicate webhook collapsed to one processed job via BullMQ's own job-id
+dedup, worker boot log confirming the reconciliation scheduler registered).

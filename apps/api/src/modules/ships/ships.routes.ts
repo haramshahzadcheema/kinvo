@@ -8,14 +8,14 @@ import {
   updateShipStatusRequestSchema,
   updateTruckRequirementRequestSchema,
 } from '@kinvo/contracts';
+import type { RequestHandler } from 'express';
 import { Router } from 'express';
-import { authenticate } from '../../core/middleware/authenticate';
 import { authorize } from '../../core/middleware/authorize';
 import { validateBody, validateQuery } from '../../core/middleware/validate';
 import { createShipsController } from './ships.controller';
 import type { ShipsService } from './ships.service';
 
-export function createShipsRouter(shipsService: ShipsService): Router {
+export function createShipsRouter(shipsService: ShipsService, authenticate: RequestHandler): Router {
   const router = Router();
   const controller = createShipsController(shipsService);
 

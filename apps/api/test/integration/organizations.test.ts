@@ -4,6 +4,7 @@ import { prisma, withoutTenantScope } from '../../src/core/prisma';
 import { buildApp } from '../support/app';
 import { resetDatabase } from '../support/db';
 import { registerOrganization } from '../support/fixtures';
+import { cookieHeader, extractRefreshTokenCookie } from '../support/http';
 
 beforeEach(async () => {
   await resetDatabase();
@@ -343,6 +344,104 @@ describe('member management', () => {
       .get('/api/v1/organizations/members')
       .set('Authorization', `Bearer ${owner.accessToken}`);
     expect(listResponse.body.members).toHaveLength(1); // only the owner remains active
+  });
+});
+
+describe('access revocation on role change / removal', () => {
+  // authenticate.ts trusts an access token's claims for up to JWT_ACCESS_TTL
+  // with no per-request database check — updateMemberRole/removeMember
+  // (organizations.service.ts) close the resulting staleness window by
+  // revoking the membership in Redis, checked on every request after.
+  async function inviteAndAccept(app: ReturnType<typeof buildApp>, owner: { accessToken: string }) {
+    const invite = await request(app)
+      .post('/api/v1/organizations/invitations')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ email: `revocation-${Date.now()}@example.com`, role: 'VIEWER' });
+    const accept = await request(app).post('/api/v1/auth/accept-invitation').send({
+      token: invite.body.inviteToken,
+      password: 'a-perfectly-good-password',
+      firstName: 'Revocable',
+      lastName: 'Member',
+    });
+    return {
+      membershipId: accept.body.membership.id as string,
+      accessToken: accept.body.accessToken as string,
+      refreshTokenCookie: cookieHeader(extractRefreshTokenCookie(accept)),
+    };
+  }
+
+  it("a member's own already-issued access token stops working the moment their role changes", async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const member = await inviteAndAccept(app, owner);
+
+    const beforeChange = await request(app)
+      .get('/api/v1/organizations/members')
+      .set('Authorization', `Bearer ${member.accessToken}`);
+    expect(beforeChange.status).toBe(200);
+
+    const roleChange = await request(app)
+      .patch(`/api/v1/organizations/members/${member.membershipId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ role: 'ADMIN' });
+    expect(roleChange.status).toBe(200);
+
+    // The exact same, still-unexpired token — now stale — must be rejected.
+    const afterChange = await request(app)
+      .get('/api/v1/organizations/members')
+      .set('Authorization', `Bearer ${member.accessToken}`);
+    expect(afterChange.status).toBe(401);
+
+    // The refresh token is unaffected — the member's next refresh silently
+    // picks up the new role instead of forcing a full re-login.
+    const refreshed = await request(app)
+      .post('/api/v1/auth/refresh')
+      .set('Cookie', member.refreshTokenCookie);
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.body.membership.role).toBe('ADMIN');
+
+    const afterRefresh = await request(app)
+      .get('/api/v1/organizations/members')
+      .set('Authorization', `Bearer ${refreshed.body.accessToken}`);
+    expect(afterRefresh.status).toBe(200);
+  });
+
+  it("a removed member's access token stops working immediately, and their refresh token is also rejected", async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const member = await inviteAndAccept(app, owner);
+
+    const removeResponse = await request(app)
+      .delete(`/api/v1/organizations/members/${member.membershipId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(removeResponse.status).toBe(204);
+
+    const afterRemoval = await request(app)
+      .get('/api/v1/organizations/members')
+      .set('Authorization', `Bearer ${member.accessToken}`);
+    expect(afterRemoval.status).toBe(401);
+
+    const refreshAttempt = await request(app)
+      .post('/api/v1/auth/refresh')
+      .set('Cookie', member.refreshTokenCookie);
+    expect(refreshAttempt.status).toBe(401);
+  });
+
+  it('does not revoke a still-live token when a role update is a no-op (same role)', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const member = await inviteAndAccept(app, owner);
+
+    const noOpUpdate = await request(app)
+      .patch(`/api/v1/organizations/members/${member.membershipId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ role: 'VIEWER' });
+    expect(noOpUpdate.status).toBe(200);
+
+    const stillWorks = await request(app)
+      .get('/api/v1/organizations/members')
+      .set('Authorization', `Bearer ${member.accessToken}`);
+    expect(stillWorks.status).toBe(200);
   });
 });
 

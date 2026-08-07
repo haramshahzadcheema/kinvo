@@ -121,6 +121,7 @@ export function AssignmentsPage() {
               onReject={() => actions.reject(a.id)}
               onCancel={() => actions.cancel(a.id)}
               onLogAttempt={() => actions.logAttempt(a.id)}
+              onCallDriver={() => actions.callDriver(a.id)}
               isMutating={actions.isMutating}
             />
           ))}

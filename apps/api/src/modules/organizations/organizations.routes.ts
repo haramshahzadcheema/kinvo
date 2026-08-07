@@ -1,12 +1,15 @@
 import { createInvitationRequestSchema, updateMemberRoleRequestSchema } from '@kinvo/contracts';
+import type { RequestHandler } from 'express';
 import { Router } from 'express';
-import { authenticate } from '../../core/middleware/authenticate';
 import { authorize } from '../../core/middleware/authorize';
 import { validateBody } from '../../core/middleware/validate';
 import { createOrganizationsController } from './organizations.controller';
 import type { OrganizationsService } from './organizations.service';
 
-export function createOrganizationsRouter(organizationsService: OrganizationsService): Router {
+export function createOrganizationsRouter(
+  organizationsService: OrganizationsService,
+  authenticate: RequestHandler,
+): Router {
   const router = Router();
   const controller = createOrganizationsController(organizationsService);
 

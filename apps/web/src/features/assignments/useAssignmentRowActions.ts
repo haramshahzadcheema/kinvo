@@ -1,4 +1,4 @@
-import type { AttemptOutcomeValue } from '@kinvo/contracts';
+import type { HumanLoggableAttemptOutcomeValue } from '@kinvo/contracts';
 import { useState } from 'react';
 import { isApiError } from '../../lib/useAuth';
 import { useAssignmentMutations } from './useAssignments';
@@ -16,7 +16,8 @@ export function useAssignmentRowActions() {
   const [error, setError] = useState<string | null>(null);
   const [rowAction, setRowAction] = useState<RowAction>(null);
   const [reasonInput, setReasonInput] = useState('');
-  const [attemptOutcome, setAttemptOutcome] = useState<AttemptOutcomeValue>('NO_ANSWER');
+  const [attemptOutcome, setAttemptOutcome] =
+    useState<HumanLoggableAttemptOutcomeValue>('NO_ANSWER');
   const [attemptNotes, setAttemptNotes] = useState('');
 
   const isMutating =
@@ -25,7 +26,8 @@ export function useAssignmentRowActions() {
     mutations.markNoShow.isPending ||
     mutations.rejectAssignment.isPending ||
     mutations.cancelAssignment.isPending ||
-    mutations.logAttempt.isPending;
+    mutations.logAttempt.isPending ||
+    mutations.placeVoiceCall.isPending;
 
   function closeRowAction() {
     setRowAction(null);
@@ -95,6 +97,15 @@ export function useAssignmentRowActions() {
     }
   }
 
+  async function callDriver(assignmentId: string) {
+    setError(null);
+    try {
+      await mutations.placeVoiceCall.mutateAsync(assignmentId);
+    } catch (err) {
+      setError(isApiError(err) ? err.message : 'Could not start the automated call.');
+    }
+  }
+
   async function logAttempt(assignmentId: string) {
     setError(null);
     try {
@@ -129,5 +140,6 @@ export function useAssignmentRowActions() {
     reject,
     cancel,
     logAttempt,
+    callDriver,
   };
 }

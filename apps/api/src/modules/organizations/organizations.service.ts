@@ -2,23 +2,18 @@ import type { CreateInvitationRequest, InvitationDto, Member, RoleValue } from '
 import type { Invitation } from '@prisma/client';
 import type { AuditLogger } from '../../core/audit/audit-logger';
 import { ConflictError, NotFoundError } from '../../core/errors/AppError';
-import type { prisma as prismaClient } from '../../core/prisma';
+import type { prisma as prismaClient, TransactionClient } from '../../core/prisma';
 import { getRequestContext } from '../../core/request-context';
+import type { TokenRevocationStore } from '../../core/security/token-revocation';
 
 const INVITATION_TTL_DAYS = 7;
-
-// Prisma Client Extensions change the shape of the transaction-callback
-// client just enough that the base `Prisma.TransactionClient` type doesn't
-// structurally match it — deriving the type from the actual extended
-// client (rather than importing the generic one) is what keeps this
-// correct instead of fighting the type checker with a cast.
-type TransactionClient = Parameters<Parameters<typeof prismaClient.$transaction>[0]>[0];
 
 export interface OrganizationsServiceDependencies {
   prisma: typeof prismaClient;
   generateInvitationTokenValue: () => string;
   hashInvitationTokenValue: (rawValue: string) => string;
   auditLogger: AuditLogger;
+  tokenRevocationStore: TokenRevocationStore;
 }
 
 export interface OrganizationsService {
@@ -47,6 +42,7 @@ export function createOrganizationsService({
   generateInvitationTokenValue,
   hashInvitationTokenValue,
   auditLogger,
+  tokenRevocationStore,
 }: OrganizationsServiceDependencies): OrganizationsService {
   // Takes a row-level lock on every active-owner membership in this
   // organization before counting them, for the life of the enclosing
@@ -123,7 +119,18 @@ export function createOrganizationsService({
       return { previousRole: target.role, updated };
     });
 
-    auditLogger.record({
+    // Any access token already issued for this membership still carries the
+    // old role for up to JWT_ACCESS_TTL unless explicitly revoked — see
+    // core/security/token-revocation.ts. Only called when the role
+    // genuinely changed, matching assertNotLastOwnerLocked's guard above:
+    // a no-op "change" to the same role has nothing stale to invalidate,
+    // and would otherwise force a redundant token refresh on every device
+    // this member is signed in on.
+    if (previousRole !== role) {
+      await tokenRevocationStore.revokeMembership(membershipId);
+    }
+
+    await auditLogger.record({
       type: 'membership.role_changed',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -159,7 +166,14 @@ export function createOrganizationsService({
       await tx.membership.update({ where: { id: membershipId }, data: { status: 'REMOVED' } });
     });
 
-    auditLogger.record({
+    // Unconditional, unlike the role-change guard above — removal always
+    // represents a genuine access change, and refresh() (auth.service.ts)
+    // will correctly reject this membership's refresh token on its next
+    // use once status is REMOVED, but the still-live access token needs
+    // this to stop working before its own exp.
+    await tokenRevocationStore.revokeMembership(membershipId);
+
+    await auditLogger.record({
       type: 'membership.removed',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -207,7 +221,7 @@ export function createOrganizationsService({
       },
     });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'invitation.sent',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -238,7 +252,7 @@ export function createOrganizationsService({
 
     await prisma.invitation.update({ where: { id: invitationId }, data: { status: 'REVOKED' } });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'invitation.revoked',
       actorUserId: context.userId,
       organizationId: context.organizationId,

@@ -1,4 +1,4 @@
-import type { AssignmentDto, AttemptOutcomeValue } from '@kinvo/contracts';
+import type { AssignmentDto, HumanLoggableAttemptOutcomeValue } from '@kinvo/contracts';
 import { formatDateTime, formatRate } from '../../lib/format';
 import {
   ASSIGNMENT_STATUS_LABEL,
@@ -31,16 +31,17 @@ export function AssignmentRow({
   onReject,
   onCancel,
   onLogAttempt,
+  onCallDriver,
   isMutating,
 }: {
   assignment: AssignmentDto;
   showContext?: boolean;
   rowAction: RowAction;
   reasonInput: string;
-  attemptOutcome: AttemptOutcomeValue;
+  attemptOutcome: HumanLoggableAttemptOutcomeValue;
   attemptNotes: string;
   onReasonChange: (v: string) => void;
-  onAttemptOutcomeChange: (v: AttemptOutcomeValue) => void;
+  onAttemptOutcomeChange: (v: HumanLoggableAttemptOutcomeValue) => void;
   onAttemptNotesChange: (v: string) => void;
   onOpenRowAction: (kind: RowActionKind) => void;
   onCloseRowAction: () => void;
@@ -50,6 +51,7 @@ export function AssignmentRow({
   onReject: () => void;
   onCancel: () => void;
   onLogAttempt: () => void;
+  onCallDriver: () => void;
   isMutating: boolean;
 }) {
   const isActiveRow = rowAction?.assignmentId === assignment.id;
@@ -98,6 +100,13 @@ export function AssignmentRow({
         </div>
       )}
 
+      {assignment.status === 'PENDING' && assignment.pendingVoiceCall && (
+        <div className="mt-1.5 flex items-center gap-1 rounded-lg bg-[#EAF3F1] px-2 py-1 text-[10.5px] font-semibold text-[#1E7A8C]">
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#1E7A8C]" />
+          Calling since {formatDateTime(assignment.pendingVoiceCall.placedAt)}
+        </div>
+      )}
+
       {assignment.status === 'PENDING' && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           <button
@@ -106,6 +115,14 @@ export function AssignmentRow({
             className="rounded-full bg-[#1E7A8C] px-2.5 py-1 text-[10.5px] font-semibold text-white disabled:opacity-50"
           >
             Confirm
+          </button>
+          <button
+            onClick={onCallDriver}
+            disabled={isMutating || Boolean(assignment.pendingVoiceCall)}
+            title="Places an automated confirmation call via CALL-E"
+            className="rounded-full border border-[#1E7A8C] px-2.5 py-1 text-[10.5px] font-semibold text-[#1E7A8C] disabled:opacity-50"
+          >
+            {assignment.pendingVoiceCall ? 'Calling…' : 'Call driver'}
           </button>
           <button
             onClick={() => onOpenRowAction('logAttempt')}
@@ -200,7 +217,9 @@ export function AssignmentRow({
         <div className="mt-2 rounded-lg bg-[#FBF6EE] p-2">
           <select
             value={attemptOutcome}
-            onChange={(e) => onAttemptOutcomeChange(e.target.value as AttemptOutcomeValue)}
+            onChange={(e) =>
+              onAttemptOutcomeChange(e.target.value as HumanLoggableAttemptOutcomeValue)
+            }
             className="w-full rounded-lg border border-[#ECE1CC] px-2 py-1.5 text-[11.5px] outline-none"
           >
             {LOGGABLE_ATTEMPT_OUTCOMES.map((outcome) => (
@@ -240,6 +259,11 @@ export function AssignmentRow({
             {assignment.attempts.map((att) => (
               <div key={att.id} className="text-[10.5px] text-[#5C6B75]">
                 {formatDateTime(att.attemptedAt)} · {ATTEMPT_OUTCOME_LABEL[att.outcome]}
+                {att.provider && (
+                  <span className="ml-1 rounded-full bg-[#EAF3F1] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[#1E7A8C]">
+                    Automated · {att.provider}
+                  </span>
+                )}
                 {att.notes && ` — ${att.notes}`}
               </div>
             ))}

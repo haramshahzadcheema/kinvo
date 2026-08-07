@@ -8,7 +8,7 @@ import type {
 import { Prisma } from '@prisma/client';
 import type { AuditLogger } from '../../core/audit/audit-logger';
 import { ConflictError, NotFoundError, ValidationError } from '../../core/errors/AppError';
-import type { prisma as prismaClient } from '../../core/prisma';
+import type { prisma as prismaClient, TransactionClient } from '../../core/prisma';
 import { getRequestContext } from '../../core/request-context';
 
 export interface DriversServiceDependencies {
@@ -82,6 +82,37 @@ export function createDriversService({
     if (!ship) {
       throw new ValidationError('currentShipId does not refer to a ship in this organization.');
     }
+  }
+
+  // Locks this driver row for the life of the enclosing transaction before
+  // updateDriver re-checks its active-assignment guard below. Closes a real
+  // TOCTOU race: the guard's read and the eventual write used to be two
+  // separate, unlocked statements, so a dispatcher's plain "mark IDLE" edit
+  // and a concurrent confirmAssignment/cancelAssignment/markNoShow on the
+  // very same driver could interleave — e.g. the guard reads "no active
+  // confirmed assignment", confirmAssignment then confirms the driver onto
+  // a job, and this update proceeds anyway and stomps availability back to
+  // IDLE, or the reverse: a dispatcher clears an engagement here in the
+  // gap right before markNoShow tries to do the same thing correctly.
+  // `FOR UPDATE` isn't reachable through Prisma's query builder, so this is
+  // raw SQL, manually scoped by organizationId since raw queries bypass the
+  // tenant-scoping extension (see core/prisma.ts) — same precedent as
+  // organizations.service.ts's assertNotLastOwnerLocked and
+  // assignments.service.ts's lockShipRow. This never locks Assignment or
+  // Ship, only Driver, so it can never be the second half of a deadlock
+  // cycle with confirmAssignment (Assignment -> Driver) or
+  // cancelAssignment/markNoShow (Ship -> Assignment -> Driver) — it only
+  // ever waits on Driver, never holds Driver while waiting on the others.
+  async function lockDriverRow(
+    tx: TransactionClient,
+    organizationId: string,
+    driverId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`
+      SELECT id FROM drivers
+      WHERE id = ${driverId} AND "organizationId" = ${organizationId}
+      FOR UPDATE
+    `;
   }
 
   async function listDrivers(query: DriverListQuery): Promise<DriverListResponse> {
@@ -167,7 +198,7 @@ export function createDriversService({
       throw translatePhoneConflict(error);
     }
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'driver.created',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -190,63 +221,71 @@ export function createDriversService({
       await assertShipBelongsToOrg(input.currentShipId);
     }
 
-    // availability/currentShipId are otherwise owned by the assignment state
-    // machine (confirmAssignment/cancelAssignment/markNoShow, and the ship
-    // cancellation/completion cascades in ships.service.ts all set both
-    // together as a side effect of a real event). This endpoint must not let
-    // either one drift away from a live CONFIRMED assignment out from under
-    // it — that's exactly how a driver gets double-booked: marked IDLE here
-    // while still genuinely committed, then picked up as "available" and
-    // confirmed onto a second job. Ending a real engagement must go through
-    // cancelAssignment/markNoShow, which correctly clears both fields.
-    if (input.availability !== undefined || input.currentShipId !== undefined) {
-      const activeAssignment = await prisma.assignment.findFirst({
-        where: { driverId, status: 'CONFIRMED' },
-        select: { truckRequirement: { select: { shipId: true } } },
-      });
-
-      if (activeAssignment) {
-        const leavingConfirmed =
-          input.availability !== undefined && input.availability !== 'CONFIRMED';
-        const changingShip =
-          input.currentShipId !== undefined &&
-          input.currentShipId !== activeAssignment.truckRequirement.shipId;
-
-        if (leavingConfirmed || changingShip) {
-          throw new ConflictError(
-            'This driver has an active confirmed assignment. Cancel or complete it before changing availability or ship directly.',
-          );
-        }
-      }
-    }
-
     let driver: DriverWithShip;
     try {
-      driver = await prisma.driver.update({
-        where: { id: driverId },
-        data: {
-          fullName: input.fullName,
-          phone: input.phone,
-          licenseNumber: input.licenseNumber,
-          nationalId: input.nationalId,
-          truckPlate: input.truckPlate,
-          truckType: input.truckType,
-          capacity: input.capacity,
-          languages: input.languages,
-          preferredRoutes: input.preferredRoutes,
-          preferredCompanies: input.preferredCompanies,
-          rating: input.rating,
-          availability: input.availability,
-          currentShipId: input.currentShipId,
-          notes: input.notes,
-        },
-        include: DRIVER_INCLUDE,
+      driver = await prisma.$transaction(async (tx) => {
+        await lockDriverRow(tx, context.organizationId, driverId);
+
+        // availability/currentShipId are otherwise owned by the assignment
+        // state machine (confirmAssignment/cancelAssignment/markNoShow, and
+        // the ship cancellation/completion cascades in ships.service.ts all
+        // set both together as a side effect of a real event). This
+        // endpoint must not let either one drift away from a live
+        // CONFIRMED assignment out from under it — that's exactly how a
+        // driver gets double-booked: marked IDLE here while still
+        // genuinely committed, then picked up as "available" and confirmed
+        // onto a second job. Ending a real engagement must go through
+        // cancelAssignment/markNoShow, which correctly clears both fields.
+        // Re-checked here, inside the same transaction as the lock above
+        // and the write below, not as a separate statement beforehand —
+        // see lockDriverRow's comment for the race this closes.
+        if (input.availability !== undefined || input.currentShipId !== undefined) {
+          const activeAssignment = await tx.assignment.findFirst({
+            where: { driverId, status: 'CONFIRMED' },
+            select: { truckRequirement: { select: { shipId: true } } },
+          });
+
+          if (activeAssignment) {
+            const leavingConfirmed =
+              input.availability !== undefined && input.availability !== 'CONFIRMED';
+            const changingShip =
+              input.currentShipId !== undefined &&
+              input.currentShipId !== activeAssignment.truckRequirement.shipId;
+
+            if (leavingConfirmed || changingShip) {
+              throw new ConflictError(
+                'This driver has an active confirmed assignment. Cancel or complete it before changing availability or ship directly.',
+              );
+            }
+          }
+        }
+
+        return tx.driver.update({
+          where: { id: driverId },
+          data: {
+            fullName: input.fullName,
+            phone: input.phone,
+            licenseNumber: input.licenseNumber,
+            nationalId: input.nationalId,
+            truckPlate: input.truckPlate,
+            truckType: input.truckType,
+            capacity: input.capacity,
+            languages: input.languages,
+            preferredRoutes: input.preferredRoutes,
+            preferredCompanies: input.preferredCompanies,
+            rating: input.rating,
+            availability: input.availability,
+            currentShipId: input.currentShipId,
+            notes: input.notes,
+          },
+          include: DRIVER_INCLUDE,
+        });
       });
     } catch (error) {
       throw translatePhoneConflict(error);
     }
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'driver.updated',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -289,7 +328,7 @@ export function createDriversService({
       throw error;
     }
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'driver.deleted',
       actorUserId: context.userId,
       organizationId: context.organizationId,

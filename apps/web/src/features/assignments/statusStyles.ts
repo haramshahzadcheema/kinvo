@@ -1,4 +1,9 @@
-import type { AssignmentStatusValue, AttemptOutcomeValue } from '@kinvo/contracts';
+import { humanLoggableAttemptOutcomeSchema } from '@kinvo/contracts';
+import type {
+  AssignmentStatusValue,
+  AttemptOutcomeValue,
+  HumanLoggableAttemptOutcomeValue,
+} from '@kinvo/contracts';
 
 export const ASSIGNMENT_STATUS_LABEL: Record<AssignmentStatusValue, string> = {
   PENDING: 'Pending',
@@ -35,12 +40,10 @@ export const ATTEMPT_OUTCOME_LABEL: Record<AttemptOutcomeValue, string> = {
 // Manual outreach (Phase 3) never logs SYSTEM_ERROR — that outcome is
 // reserved for Phase 4's CALL-E webhook to report a call-platform-side
 // failure, not something a dispatcher observed on a call they made
-// themselves. Left out of the selectable options here for that reason.
-export const LOGGABLE_ATTEMPT_OUTCOMES: AttemptOutcomeValue[] = [
-  'NO_ANSWER',
-  'BUSY',
-  'UNREACHABLE',
-  'WRONG_NUMBER',
-  'REJECTED',
-  'CONFIRMED',
+// themselves. Derived from the same schema the backend validates
+// POST /assignments/:id/attempts against (packages/contracts), rather than
+// a separately hand-maintained list — the two must never drift apart, and
+// this is now the one place SYSTEM_ERROR's exclusion is spelled out.
+export const LOGGABLE_ATTEMPT_OUTCOMES: HumanLoggableAttemptOutcomeValue[] = [
+  ...humanLoggableAttemptOutcomeSchema.options,
 ];

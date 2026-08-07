@@ -111,6 +111,7 @@ export type {
 export {
   assignmentStatusSchema,
   attemptOutcomeSchema,
+  humanLoggableAttemptOutcomeSchema,
   assignmentAttemptSchema,
   logAttemptRequestSchema,
   assignmentSchema,
@@ -123,6 +124,7 @@ export {
 export type {
   AssignmentStatusValue,
   AttemptOutcomeValue,
+  HumanLoggableAttemptOutcomeValue,
   AssignmentAttemptDto,
   LogAttemptRequest,
   AssignmentDto,

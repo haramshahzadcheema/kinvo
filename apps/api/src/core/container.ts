@@ -11,11 +11,13 @@ import {
   type OrganizationsService,
 } from '../modules/organizations/organizations.service';
 import { createShipsService, type ShipsService } from '../modules/ships/ships.service';
+import { createVoiceService, type VoiceService } from '../modules/voice/voice.service';
 import { createAuditLogger, type AuditLogger } from './audit/audit-logger';
 import { logger } from './logger';
 import { checkDatabaseConnection, prisma } from './prisma';
-import { checkRedisConnection } from './redis';
+import { checkRedisConnection, redis } from './redis';
 import { hashPassword, verifyPassword } from './security/password';
+import { createTokenRevocationStore, type TokenRevocationStore } from './security/token-revocation';
 import {
   generateInvitationTokenValue,
   generateRefreshTokenValue,
@@ -24,6 +26,10 @@ import {
   refreshTokenExpiryDate,
   signAccessToken,
 } from './security/tokens';
+import { env, requireCalleApiKey } from '../config/env';
+import { createCallEAdapter } from './voice/CallEAdapter';
+import { createFakeVoiceProvider } from './voice/FakeVoiceProvider';
+import type { VoiceProvider } from './voice/VoiceProvider';
 
 /**
  * The composition root: the one place concrete implementations get wired
@@ -45,6 +51,9 @@ export interface Container {
   driversService: DriversService;
   assignmentsService: AssignmentsService;
   auditLogger: AuditLogger;
+  tokenRevocationStore: TokenRevocationStore;
+  voiceProvider: VoiceProvider;
+  voiceService: VoiceService;
 }
 
 export function createContainer(): Container {
@@ -53,7 +62,8 @@ export function createContainer(): Container {
     checkRedisConnection,
   });
 
-  const auditLogger = createAuditLogger(logger);
+  const auditLogger = createAuditLogger(logger, prisma);
+  const tokenRevocationStore = createTokenRevocationStore(redis);
 
   const authService = createAuthService({
     prisma,
@@ -73,11 +83,25 @@ export function createContainer(): Container {
     generateInvitationTokenValue,
     hashInvitationTokenValue,
     auditLogger,
+    tokenRevocationStore,
   });
 
   const shipsService = createShipsService({ prisma, auditLogger });
   const driversService = createDriversService({ prisma, auditLogger });
   const assignmentsService = createAssignmentsService({ prisma, auditLogger });
+
+  // The test environment gets an in-memory FakeVoiceProvider instead of a
+  // real CallEAdapter: it has no CALL-E account to call, and constructing a
+  // CalleClient with no real key would be a pointless (if harmless) step on
+  // every one of hundreds of test runs. Every other environment wires the
+  // real adapter — env.ts's schema refine already guarantees CALLE_API_KEY
+  // is set by the time this code runs outside of tests.
+  const voiceProvider: VoiceProvider =
+    env.NODE_ENV === 'test'
+      ? createFakeVoiceProvider()
+      : createCallEAdapter({ apiKey: requireCalleApiKey(), baseUrl: env.CALLE_BASE_URL });
+
+  const voiceService = createVoiceService({ prisma, voiceProvider, assignmentsService, logger });
 
   return {
     healthService,
@@ -87,5 +111,8 @@ export function createContainer(): Container {
     driversService,
     assignmentsService,
     auditLogger,
+    tokenRevocationStore,
+    voiceProvider,
+    voiceService,
   };
 }

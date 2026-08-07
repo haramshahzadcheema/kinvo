@@ -14,6 +14,19 @@ export function useAssignments(params: AssignmentListParams) {
   return useQuery({
     queryKey: [...ASSIGNMENTS_KEY, params],
     queryFn: () => assignmentsApi.list(params),
+    // Poll only while at least one row in this exact result has a call in
+    // flight (pendingVoiceCall !== null) — an automated confirmation call
+    // usually resolves within seconds to a couple of minutes, and a
+    // dispatcher watching this list should see that resolution on its own,
+    // not just after a manual refresh. Self-disabling: the moment nothing
+    // is pending, this reverts to the rest of the app's established
+    // "no polling, blanket-invalidate-on-mutation" convention.
+    refetchInterval: (query) => {
+      const hasPendingCall = query.state.data?.items.some(
+        (item) => item.pendingVoiceCall !== null,
+      );
+      return hasPendingCall ? 4000 : false;
+    },
   });
 }
 
@@ -90,6 +103,11 @@ export function useAssignmentMutations() {
     onSuccess: invalidate,
   });
 
+  const placeVoiceCall = useMutation({
+    mutationFn: (assignmentId: string) => assignmentsApi.placeVoiceCall(assignmentId),
+    onSuccess: invalidate,
+  });
+
   return {
     createAssignment,
     confirmAssignment,
@@ -98,5 +116,6 @@ export function useAssignmentMutations() {
     cancelAssignment,
     markNoShow,
     logAttempt,
+    placeVoiceCall,
   };
 }

@@ -204,7 +204,7 @@ export function createAuthService({
     }
     const { user, organization, membership } = created;
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'auth.register_organization',
       actorUserId: user.id,
       organizationId: organization.id,
@@ -235,7 +235,7 @@ export function createAuthService({
 
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'auth.login',
       actorUserId: user.id,
       organizationId: organization.id,
@@ -342,7 +342,7 @@ export function createAuthService({
     });
 
     const membership = await resolveActiveMembership(token.userId);
-    auditLogger.record({
+    await auditLogger.record({
       type: 'auth.logout',
       actorUserId: token.userId,
       organizationId: membership?.organizationId,
@@ -362,7 +362,7 @@ export function createAuthService({
     });
 
     const membership = await resolveActiveMembership(token.userId);
-    auditLogger.record({
+    await auditLogger.record({
       type: 'auth.logout_all',
       actorUserId: token.userId,
       organizationId: membership?.organizationId,
@@ -445,7 +445,7 @@ export function createAuthService({
     }
     const { user, organization, membership } = created;
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'invitation.accepted',
       actorUserId: user.id,
       organizationId: organization.id,

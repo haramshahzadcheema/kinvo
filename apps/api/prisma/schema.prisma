@@ -312,16 +312,17 @@ model Assignment {
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
-  organization     Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  truckRequirement TruckRequirement    @relation(fields: [truckRequirementId], references: [id], onDelete: Restrict)
-  driver           Driver              @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  truckRequirement    TruckRequirement     @relation(fields: [truckRequirementId], references: [id], onDelete: Restrict)
+  driver              Driver               @relation(fields: [driverId], references: [id], onDelete: Restrict)
   // No onDelete specified, matching Invitation.invitedById's exact shape —
   // there is no user-delete flow today, so this is dormant either way, but
   // an assignment's record of who created it is a fact worth restricting
   // against silent loss, same reasoning as every other "who did this" FK
   // in this schema.
-  createdByUser    User                @relation("AssignmentCreatedBy", fields: [createdByUserId], references: [id])
-  attempts         AssignmentAttempt[]
+  createdByUser       User                 @relation("AssignmentCreatedBy", fields: [createdByUserId], references: [id])
+  attempts            AssignmentAttempt[]
+  voiceCallPlacements VoiceCallPlacement[]
 
   // A driver may have at most one ACTIVE (PENDING or CONFIRMED) engagement
   // per requirement at a time — re-approaching a driver after an earlier
@@ -360,18 +361,136 @@ model AssignmentAttempt {
   outcome          AttemptOutcome
   notes            String?
   externalCallId   String?        @unique
+  // Which voice provider produced this attempt, when it wasn't a human
+  // dispatcher — null for every human-recorded attempt (recordedByUserId
+  // set instead). A plain string, not an enum: CALL-E is the only
+  // provider today (see core/voice/VoiceProvider.ts), and a string avoids
+  // a schema migration the day a second provider is added, at the cost of
+  // no DB-level validation of the value — acceptable since this column is
+  // written by exactly one call site (the voice worker), never from user
+  // input.
+  provider         String?
   recordedByUserId String?
   attemptedAt      DateTime       @default(now())
 
-  assignment     Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  assignment     Assignment          @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   // SetNull, not Restrict — recordedByUserId is already nullable for the
   // Phase 4 case of a CALL-E webhook attempt with no human actor at all,
   // so "we no longer know who recorded this" is an existing, valid state
   // this field can be in, not a new one this relation introduces.
-  recordedByUser User?      @relation("AssignmentAttemptRecordedBy", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+  recordedByUser User?               @relation("AssignmentAttemptRecordedBy", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+  webhookEvents  VoiceWebhookEvent[]
 
   @@index([assignmentId, attemptedAt])
   @@map("assignment_attempts")
+}
+
+// Durable idempotency ledger for inbound voice-provider webhook events —
+// keyed by the PROVIDER's own event id, not a generated one, so the insert
+// itself IS the "have we already processed this exact delivery" check via
+// the primary key's own uniqueness.
+//
+// Deliberately NOT written atomically with the AssignmentAttempt it
+// corresponds to: confirmAssignment/rejectAssignment/logAttempt each run
+// their own internal transaction and don't accept an externally-supplied
+// one (a larger, riskier change to already-hardened Phase 3 code than this
+// table's own guarantee requires). This row is instead the LAST of four
+// independent, defense-in-depth idempotency layers voice.service.ts's
+// processWebhookSignal relies on — see that file's module comment for all
+// four. A crash between "attempt recorded" and "this row inserted" just
+// means a retried delivery re-derives the same, already-correct outcome
+// and finds AssignmentAttempt.externalCallId already set, rather than
+// double-applying anything.
+//
+// Deliberately outside the tenant-scoping extension (see core/prisma.ts's
+// TENANT_SCOPED_MODELS comment): a webhook arrives with no bound tenant
+// context at all — the organization is only knowable after resolving
+// attemptId back through Assignment, which is exactly why this table
+// doesn't try to carry its own organizationId column redundantly.
+model VoiceWebhookEvent {
+  id         String   @id
+  attemptId  String
+  receivedAt DateTime @default(now())
+
+  attempt AssignmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@index([attemptId])
+  @@map("voice_webhook_events")
+}
+
+// The durable record that a call is (or was) in flight for an assignment —
+// created the moment CallEAdapter.requestConfirmationCall succeeds, before
+// anything about the call's eventual outcome is known. Without this row,
+// nothing on Kinvo's side could answer "which calls are we still waiting
+// on?" — CALL-E's webhook is the only other source of that fact, and it
+// can be lost (delivery failure) or never fire at all (no webhook exists
+// for the `canceled` CallStatus — verified from the SDK's schema, not
+// assumed). `resolvedAt` is what reconcileStaleAttempts (voice.service.ts)
+// queries to find placements that missed their webhook and need an active
+// re-check, and — past VOICE_RECONCILE_STALE_AFTER_MINUTES — placements
+// Kinvo gives up waiting on and force-resolves to its own system_error.
+//
+// Deliberately not tenant-scoped (see AssignmentAttempt's own precedent):
+// every access to it goes through an already-known assignmentId or
+// externalCallId, never a "list all placements" query that would need
+// organizationId to be safe.
+model VoiceCallPlacement {
+  id             String    @id @default(cuid())
+  assignmentId   String
+  provider       String
+  externalCallId String    @unique
+  placedAt       DateTime  @default(now())
+  resolvedAt     DateTime?
+
+  // Cascade, matching AssignmentAttempt's own relation to Assignment —
+  // there is no delete flow for Assignment today (rows persist as
+  // permanent history), so this is dormant in practice, but a placement
+  // record has no meaning once its assignment is gone, same reasoning as
+  // AssignmentAttempt's.
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([assignmentId])
+  @@index([resolvedAt, placedAt])
+  @@map("voice_call_placements")
+}
+
+// The persisted half of AuditLogger (apps/api/src/core/audit/audit-logger.ts)
+// — every event already flowing through that interface (see AuditEventType
+// in audit-events.ts) now also lands here, durable and queryable, instead of
+// only as a structured pino log line. See docs/ARCHITECTURE.md §12 for the
+// original design and this table's departure from it.
+//
+// Deliberately has NO foreign keys to User or Organization, unlike every
+// other actor/tenant reference in this schema. An audit trail exists
+// precisely to answer "who did what" *after the fact*, including after the
+// actor's membership was removed, their account was disabled, or (in a
+// future org-deletion feature) the organization itself no longer exists —
+// an FK with onDelete: Cascade would silently erase the very audit trail
+// that ought to survive the deletion it's describing, and onDelete: SetNull
+// or Restrict are both wrong in different ways (SetNull loses "who," Restrict
+// would block a legitimate member removal because of their own audit
+// history). actorUserId/organizationId/targetId are therefore plain,
+// unenforced string columns — the same trade-off already accepted
+// deliberately for AssignmentAttempt.externalCallId's forward-compatibility
+// slot, applied here for a durability reason instead.
+model AuditLogEntry {
+  id             String   @id @default(cuid())
+  type           String
+  actorUserId    String
+  // Nullable for the same reason AuditEvent.organizationId is optional
+  // (audit-events.ts): a few events (logout-all) aren't inherently
+  // org-scoped, and fabricating one would be worse than omitting it.
+  organizationId String?
+  targetId       String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  // Every list/detail query this table serves is "this organization's
+  // history, newest first" or "this organization's history for one entity" —
+  // organizationId is always the first predicate, so it leads both indexes.
+  @@index([organizationId, createdAt])
+  @@index([organizationId, targetId])
+  @@map("audit_log_entries")
 }
 
 enum AssignmentStatus {

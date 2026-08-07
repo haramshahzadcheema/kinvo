@@ -3,14 +3,17 @@ import {
   driverListQuerySchema,
   updateDriverRequestSchema,
 } from '@kinvo/contracts';
+import type { RequestHandler } from 'express';
 import { Router } from 'express';
-import { authenticate } from '../../core/middleware/authenticate';
 import { authorize } from '../../core/middleware/authorize';
 import { validateBody, validateQuery } from '../../core/middleware/validate';
 import { createDriversController } from './drivers.controller';
 import type { DriversService } from './drivers.service';
 
-export function createDriversRouter(driversService: DriversService): Router {
+export function createDriversRouter(
+  driversService: DriversService,
+  authenticate: RequestHandler,
+): Router {
   const router = Router();
   const controller = createDriversController(driversService);
 

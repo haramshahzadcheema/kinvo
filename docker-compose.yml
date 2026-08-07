@@ -58,6 +58,49 @@ services:
       redis:
         condition: service_healthy
 
+  # Second entrypoint into the same apps/api image/codebase, not a separate
+  # build — see apps/api/src/worker.ts's own doc comment for why. Runs
+  # `dev:worker` instead of `dev`, but otherwise boots identically (build
+  # contracts, generate + migrate Prisma) so a fresh `docker compose up`
+  # gets a working worker with no separate manual step, matching `api`.
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: dev
+    command: sh -c "pnpm --filter @kinvo/contracts run build && pnpm --filter @kinvo/api exec prisma generate && pnpm --filter @kinvo/api exec prisma migrate deploy && pnpm --filter @kinvo/api run dev:worker"
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kinvo}:${POSTGRES_PASSWORD:-kinvo}@postgres:5432/${POSTGRES_DB:-kinvo}
+      REDIS_URL: redis://redis:6379
+      CORS_ORIGIN: http://localhost:5173
+      LOG_LEVEL: debug
+      JWT_ACCESS_SECRET: dev-only-access-token-secret-at-least-32-characters-long
+      JWT_ACCESS_TTL: 15m
+      REFRESH_TOKEN_TTL_DAYS: '30'
+      REFRESH_TOKEN_COOKIE_NAME: kinvo_refresh_token
+      # Dev-only placeholder, same story as apps/api/.env's own — replace
+      # with a real key to actually place calls from the compose stack.
+      CALLE_API_KEY: dev-placeholder-calle-api-key
+    # The image's own HEALTHCHECK (baked in via the Dockerfile, shared with
+    # `api`) probes :4000/health/live — this container never listens on
+    # :4000 at all, so that check would just report "unhealthy" forever.
+    # Nothing depends on this service's health, so disabling it is correct,
+    # not a workaround.
+    healthcheck:
+      disable: true
+    volumes:
+      - .:/workspace
+      - /workspace/node_modules
+      - /workspace/apps/api/node_modules
+      - /workspace/apps/web/node_modules
+      - /workspace/packages/contracts/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   web:
     build:
       context: .

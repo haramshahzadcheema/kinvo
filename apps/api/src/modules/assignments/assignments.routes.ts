@@ -5,8 +5,8 @@ import {
   logAttemptRequestSchema,
   rejectAssignmentRequestSchema,
 } from '@kinvo/contracts';
+import type { RequestHandler } from 'express';
 import { Router } from 'express';
-import { authenticate } from '../../core/middleware/authenticate';
 import { authorize } from '../../core/middleware/authorize';
 import { validateBody, validateQuery } from '../../core/middleware/validate';
 import { createAssignmentsController } from './assignments.controller';
@@ -27,7 +27,10 @@ import type { AssignmentsService } from './assignments.service';
 // TruckRequirement/DocumentRequirement before it — see
 // core/rbac/permissions.ts's comment on why sub-resources aren't
 // separately permissioned.
-export function createAssignmentsRouter(assignmentsService: AssignmentsService): Router {
+export function createAssignmentsRouter(
+  assignmentsService: AssignmentsService,
+  authenticate: RequestHandler,
+): Router {
   const router = Router();
   const controller = createAssignmentsController(assignmentsService);
 

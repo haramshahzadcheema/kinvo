@@ -65,6 +65,28 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     return;
   }
 
+  // Postgres's deadlock detector picked this transaction as the victim and
+  // aborted it (SQLSTATE 40P01), which Prisma surfaces as P2034 — this is
+  // expected, occasional behavior under concurrent writes, not a bug: the
+  // other transaction in the cycle proceeds and commits normally. The
+  // correct client behavior is a transparent retry, so this is modeled as
+  // a 409 (matching every other "your write lost a race, try again" case
+  // in this app — see ConflictError) rather than falling through to the
+  // generic 500 below, which would incorrectly read as an application bug
+  // instead of a transient, self-resolving conflict.
+  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034') {
+    logger.warn({ err, requestId }, 'Transaction aborted by deadlock detection; safe to retry');
+    const body: ErrorResponseBody = {
+      error: {
+        code: 'CONCURRENT_UPDATE',
+        message: 'This update conflicted with another in-progress change. Please try again.',
+        requestId,
+      },
+    };
+    res.status(409).json(body);
+    return;
+  }
+
   if (err instanceof ZodError) {
     const body: ErrorResponseBody = {
       error: {

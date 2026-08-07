@@ -38,11 +38,44 @@ export const assignmentAttemptSchema = z.object({
   outcome: attemptOutcomeSchema,
   notes: z.string().nullable(),
   attemptedAt: z.string().datetime(),
+  // Which automated voice provider produced this attempt — null for every
+  // human-recorded attempt. Without this, the frontend has no way to tell
+  // a dispatcher's own manual contact attempt apart from an automated
+  // CALL-E call, even though the backend has tracked the distinction since
+  // Phase 4 (AssignmentAttempt.provider) — the DTO just never surfaced it.
+  provider: z.string().nullable(),
 });
 export type AssignmentAttemptDto = z.infer<typeof assignmentAttemptSchema>;
 
+// Surfaces a call that's currently in flight (VoiceCallPlacement with no
+// resolvedAt yet) — without this, a dispatcher who triggers an automated
+// call sees no change at all until (if ever) it resolves, and could easily
+// re-trigger it thinking nothing happened. Also doubles as the one piece of
+// operational visibility a support engineer gets from the API itself
+// (`placedAt` answers "how long has this been ringing?") without needing
+// direct database access.
+export const pendingVoiceCallSchema = z.object({
+  provider: z.string(),
+  placedAt: z.string().datetime(),
+});
+export type PendingVoiceCallDto = z.infer<typeof pendingVoiceCallSchema>;
+
+// SYSTEM_ERROR describes an automated call platform's own failure — only
+// Phase 4's CALL-E webhook (not yet built) has a legitimate reason to
+// report it. A human dispatcher logging a manual contact attempt through
+// this endpoint was never unable to reach their own phone system, so this
+// endpoint's request schema excludes the value outright rather than
+// relying on the frontend UI simply not offering it as a choice (which it
+// already didn't — apps/web's LOGGABLE_ATTEMPT_OUTCOMES — but a UI
+// omission is not enforcement; a direct or scripted request could still
+// set it). `attemptOutcomeSchema` above stays unrestricted: it also
+// validates the response DTO, which must be able to represent a
+// SYSTEM_ERROR outcome once CALL-E starts writing them.
+export const humanLoggableAttemptOutcomeSchema = attemptOutcomeSchema.exclude(['SYSTEM_ERROR']);
+export type HumanLoggableAttemptOutcomeValue = z.infer<typeof humanLoggableAttemptOutcomeSchema>;
+
 export const logAttemptRequestSchema = z.object({
-  outcome: attemptOutcomeSchema,
+  outcome: humanLoggableAttemptOutcomeSchema,
   notes: z.string().optional(),
 });
 export type LogAttemptRequest = z.infer<typeof logAttemptRequestSchema>;
@@ -79,6 +112,7 @@ export const assignmentSchema = z.object({
   completedAt: z.string().datetime().nullable(),
   notes: z.string().nullable(),
   attempts: z.array(assignmentAttemptSchema),
+  pendingVoiceCall: pendingVoiceCallSchema.nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

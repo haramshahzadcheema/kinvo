@@ -522,4 +522,66 @@ describe('drivers concurrency', () => {
     expect(serverErrors).toHaveLength(0);
     expect(responses.filter((r) => r.status !== 201).every((r) => r.status === 409)).toBe(true);
   });
+
+  it('under a concurrent availability edit and assignment confirmation for the same driver, they never both win', async () => {
+    // updateDriver's active-assignment guard and its write used to be two
+    // separate, unlocked statements — a concurrent confirmAssignment could
+    // commit in the gap between them, and this plain "mark ESCALATED" edit
+    // would still land unconditionally afterward, silently overwriting a
+    // driver that had just become genuinely CONFIRMED on a job (or vice
+    // versa: confirmAssignment's own atomic guard would correctly reject,
+    // but only by luck of timing, not because updateDriver held up its end
+    // of the guarantee).
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const ship = await request(app)
+      .post('/api/v1/ships')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        shipName: 'MSC Aurora',
+        truckRequirements: [
+          { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 },
+        ],
+      });
+    const truckRequirementId = ship.body.truckRequirements[0].id as string;
+    const driver = await createDriver(app, owner.accessToken);
+    const assignment = await request(app)
+      .post('/api/v1/assignments')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ truckRequirementId, driverId: driver.body.id });
+
+    const [confirmResponse, updateResponse] = await Promise.all([
+      request(app)
+        .patch(`/api/v1/assignments/${assignment.body.id}/confirm`)
+        .set('Authorization', `Bearer ${owner.accessToken}`),
+      request(app)
+        .patch(`/api/v1/drivers/${driver.body.id}`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ availability: 'ESCALATED' }),
+    ]);
+
+    expect(confirmResponse.status).not.toBe(500);
+    expect(updateResponse.status).not.toBe(500);
+
+    const driverAfter = await request(app)
+      .get(`/api/v1/drivers/${driver.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    if (confirmResponse.status === 200) {
+      // The confirm won — the conflicting availability edit must have been
+      // rejected, never silently applied on top of a driver that's now
+      // genuinely committed to a job.
+      expect(updateResponse.status).toBe(409);
+      expect(driverAfter.body.availability).toBe('CONFIRMED');
+      expect(driverAfter.body.currentShipId).toBe(ship.body.id);
+    } else {
+      // The availability edit landed first and displaced the driver before
+      // the confirm attempt reached it — the confirm must see a driver
+      // that's no longer IDLE and fail cleanly, never silently confirm
+      // over the edit.
+      expect(confirmResponse.status).toBe(409);
+      expect(updateResponse.status).toBe(200);
+      expect(driverAfter.body.availability).toBe('ESCALATED');
+    }
+  });
 });

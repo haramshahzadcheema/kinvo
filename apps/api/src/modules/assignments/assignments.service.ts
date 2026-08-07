@@ -4,41 +4,72 @@ import type {
   AssignmentListQuery,
   AssignmentListResponse,
   AssignmentStatusValue,
+  AttemptOutcomeValue,
   CancelAssignmentRequest,
   CreateAssignmentRequest,
-  LogAttemptRequest,
   RejectAssignmentRequest,
 } from '@kinvo/contracts';
 import { Prisma } from '@prisma/client';
-import { resolveTenantScopedTruckRequirement } from '../ships/ships.service';
+import {
+  lockTruckRequirementRow,
+  loadRequirementCounts,
+  resolveTenantScopedTruckRequirement,
+} from '../ships/ships.service';
 import type { AuditLogger } from '../../core/audit/audit-logger';
 import { ConflictError, NotFoundError } from '../../core/errors/AppError';
-import type { prisma as prismaClient } from '../../core/prisma';
+import type { prisma as prismaClient, TransactionClient } from '../../core/prisma';
 import { getRequestContext } from '../../core/request-context';
-
-// Prisma Client Extensions change the shape of the transaction-callback
-// client just enough that the base `Prisma.TransactionClient` type doesn't
-// structurally match it — deriving the type from the actual extended
-// client (rather than importing the generic one) is what keeps this
-// correct instead of fighting the type checker with a cast. Same
-// convention already established in organizations.service.ts.
-type TransactionClient = Parameters<Parameters<typeof prismaClient.$transaction>[0]>[0];
 
 export interface AssignmentsServiceDependencies {
   prisma: typeof prismaClient;
   auditLogger: AuditLogger;
 }
 
+// Every confirm/reject/log-attempt write needs to know who's responsible
+// for it, for two things: AssignmentAttempt.recordedByUserId (nullable,
+// human-only) and the audit log's actorUserId (required, never null).
+// Every existing HTTP call site (routes -> controllers) supplies neither
+// — it relies on the default below, which reads the authenticated
+// dispatcher out of the ambient request context, exactly the pre-Phase-4
+// behavior. The only caller that ever supplies this explicitly is
+// modules/voice's worker code, which has no HTTP request or human user to
+// read a context from — it resolves the assignment's own organizationId
+// out of the database first, binds a request context scoped to that
+// organization (see voice.service.ts), and then passes `{ source:
+// 'system', ... }` here so the resulting attempt is honestly attributed
+// to the voice provider that actually produced it, not to a borrowed
+// human identity. A discriminated union, not an optional bag of fields,
+// so "provider without externalCallId" (or vice versa) can't be
+// constructed at all.
+export type AttemptActor =
+  | { source: 'human' }
+  | { source: 'system'; provider: string; externalCallId: string };
+
+const DEFAULT_ATTEMPT_ACTOR: AttemptActor = { source: 'human' };
+
+export interface LogAttemptInput {
+  outcome: AttemptOutcomeValue;
+  notes?: string;
+}
+
 export interface AssignmentsService {
   listAssignments(query: AssignmentListQuery): Promise<AssignmentListResponse>;
   getAssignment(assignmentId: string): Promise<AssignmentDto>;
   createAssignment(input: CreateAssignmentRequest): Promise<AssignmentDto>;
-  confirmAssignment(assignmentId: string): Promise<AssignmentDto>;
-  rejectAssignment(assignmentId: string, input: RejectAssignmentRequest): Promise<AssignmentDto>;
+  confirmAssignment(assignmentId: string, actor?: AttemptActor): Promise<AssignmentDto>;
+  rejectAssignment(
+    assignmentId: string,
+    input: RejectAssignmentRequest,
+    actor?: AttemptActor,
+  ): Promise<AssignmentDto>;
   withdrawAssignment(assignmentId: string): Promise<AssignmentDto>;
   cancelAssignment(assignmentId: string, input: CancelAssignmentRequest): Promise<AssignmentDto>;
   markNoShow(assignmentId: string): Promise<AssignmentDto>;
-  logAttempt(assignmentId: string, input: LogAttemptRequest): Promise<AssignmentAttemptDto>;
+  logAttempt(
+    assignmentId: string,
+    input: LogAttemptInput,
+    actor?: AttemptActor,
+  ): Promise<AssignmentAttemptDto>;
 }
 
 // PENDING -> CONFIRMED | REJECTED | EXPIRED | WITHDRAWN (all terminal)
@@ -82,25 +113,83 @@ const ASSIGNMENT_INCLUDE = {
       truckType: true,
       rate: true,
       rateCurrency: true,
-      ship: { select: { shipName: true } },
+      ship: { select: { shipName: true, status: true } },
     },
   },
   attempts: { orderBy: { attemptedAt: 'desc' } },
+  // Only ever 0 or 1 rows in practice — a second placement can't be made
+  // while one is already unresolved (placeCallForAssignment only enqueues
+  // for a PENDING assignment, and the assignment stays PENDING while a
+  // call is in flight) — `take: 1` is defensive, not load-bearing.
+  voiceCallPlacements: {
+    where: { resolvedAt: null },
+    orderBy: { placedAt: 'desc' },
+    take: 1,
+    select: { provider: true, placedAt: true },
+  },
 } satisfies Prisma.AssignmentInclude;
 
 type AssignmentWithRelations = Prisma.AssignmentGetPayload<{ include: typeof ASSIGNMENT_INCLUDE }>;
+
+// A ship in a terminal state can never transition again — both COMPLETED
+// and CANCELLED map to an empty list in ships.service.ts's own
+// VALID_TRANSITIONS — so once confirmed terminal here, there is no race
+// window later in the same request to defend against. This guards against
+// two real gaps: createAssignment could otherwise create a fresh PENDING
+// assignment after a cancelled ship's cascade (cascadeShipCancellation)
+// has already run and finished — the cascade only touches assignments
+// that existed at the moment it ran, so a brand-new one afterward is
+// invisible to it — and confirmAssignment could then confirm that
+// assignment, permanently marking a driver CONFIRMED/unavailable against a
+// shipment that will never move again, with no system-driven way back to
+// IDLE.
+const TERMINAL_SHIP_STATUSES: readonly string[] = ['COMPLETED', 'CANCELLED'];
+
+function assertShipAcceptsAssignments(shipStatus: string): void {
+  if (TERMINAL_SHIP_STATUSES.includes(shipStatus)) {
+    throw new ConflictError(
+      `Cannot manage driver assignments — this ship is already ${shipStatus.toLowerCase()}.`,
+    );
+  }
+}
+
+// Splits an AttemptActor into the two things AssignmentAttempt.create()
+// actually needs. A system attempt is never attributed to a borrowed
+// human id — recordedByUserId stays genuinely null, exactly the state
+// this column was already nullable for (see the model comment in
+// schema.prisma).
+function attemptRecordFields(
+  actor: AttemptActor,
+  humanUserId: string,
+): { recordedByUserId: string | null; provider: string | null; externalCallId: string | null } {
+  if (actor.source === 'system') {
+    return { recordedByUserId: null, provider: actor.provider, externalCallId: actor.externalCallId };
+  }
+  return { recordedByUserId: humanUserId, provider: null, externalCallId: null };
+}
+
+// AuditEvent.actorUserId is required and has no foreign key (see
+// AuditLogEntry's schema comment) — free to hold a sentinel string, not
+// just a real user id. `system:{provider}` is a deliberately
+// unmistakable, greppable marker: a human reading an audit trail should
+// never wonder whether "system:CALL_E" was actually a person.
+function auditActorId(actor: AttemptActor, humanUserId: string): string {
+  return actor.source === 'system' ? `system:${actor.provider}` : humanUserId;
+}
 
 function toAssignmentAttemptDto(att: {
   id: string;
   outcome: AssignmentWithRelations['attempts'][number]['outcome'];
   notes: string | null;
   attemptedAt: Date;
+  provider: string | null;
 }): AssignmentAttemptDto {
   return {
     id: att.id,
     outcome: att.outcome,
     notes: att.notes,
     attemptedAt: att.attemptedAt.toISOString(),
+    provider: att.provider,
   };
 }
 
@@ -128,6 +217,12 @@ function toAssignmentDto(a: AssignmentWithRelations): AssignmentDto {
     completedAt: a.completedAt?.toISOString() ?? null,
     notes: a.notes,
     attempts: a.attempts.map(toAssignmentAttemptDto),
+    pendingVoiceCall: a.voiceCallPlacements[0]
+      ? {
+          provider: a.voiceCallPlacements[0].provider,
+          placedAt: a.voiceCallPlacements[0].placedAt.toISOString(),
+        }
+      : null,
     createdAt: a.createdAt.toISOString(),
     updatedAt: a.updatedAt.toISOString(),
   };
@@ -159,6 +254,35 @@ export function createAssignmentsService({
     return assignment;
   }
 
+  // Establishes a canonical Ship -> Assignment -> Driver lock-acquisition
+  // order, matching updateShipStatus's cascade in ships.service.ts (which
+  // locks the Ship row via its own update() first, then cascades into
+  // Assignment/Driver updates). Without this, cancelAssignment/markNoShow
+  // would take Assignment then Driver then (conditionally, inside
+  // revertShipIfNowShort) Ship locks — the exact reverse order. Two
+  // transactions each waiting on a lock the other already holds is
+  // Postgres's definition of a deadlock (SQLSTATE 40P01, surfaced by
+  // Prisma as error code P2034) — confirmed reachable by tracing both
+  // code paths' lock order, not assumed. Taking this lock unconditionally
+  // up front, even on the code path where revertShipIfNowShort ultimately
+  // decides not to write to the ship, is what pins the order for every
+  // call through this function so the cycle can't form. Raw SQL because
+  // `FOR UPDATE` isn't reachable through Prisma's query builder; manually
+  // scoped by organizationId since raw queries bypass the tenant-scoping
+  // extension in core/prisma.ts — same precedent as
+  // organizations.service.ts's assertNotLastOwnerLocked.
+  async function lockShipRow(
+    tx: TransactionClient,
+    organizationId: string,
+    shipId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`
+      SELECT id FROM ships
+      WHERE id = ${shipId} AND "organizationId" = ${organizationId}
+      FOR UPDATE
+    `;
+  }
+
   // If cancelling or no-showing a CONFIRMED assignment drops a ship that
   // had reached CONFIRMED status back below full coverage on any
   // requirement, the ship must not be left silently marked as if
@@ -177,28 +301,47 @@ export function createAssignmentsService({
   ): Promise<void> {
     const ship = await tx.ship.findFirst({
       where: { id: shipId, status: 'CONFIRMED' },
-      include: { truckRequirements: { include: { assignments: { select: { status: true } } } } },
+      select: {
+        organizationId: true,
+        truckRequirements: { select: { id: true, quantityNeeded: true } },
+      },
     });
     if (!ship) return;
 
+    // Same `groupBy`-based counts ships.service.ts's SHIP_INCLUDE fix
+    // uses — bounded by (requirement count), never by this ship's full
+    // historical assignment volume. Previously fetched every assignment
+    // row ever created against each requirement, including terminal
+    // REJECTED/WITHDRAWN/CANCELLED ones, just to filter for CONFIRMED in
+    // JS.
+    const counts = await loadRequirementCounts(
+      tx,
+      ship.truckRequirements.map((req) => req.id),
+    );
     const isShort = ship.truckRequirements.some((req) => {
-      const confirmedCount = req.assignments.filter((a) => a.status === 'CONFIRMED').length;
+      const confirmedCount = counts.get(req.id)?.confirmedCount ?? 0;
       return confirmedCount < req.quantityNeeded;
     });
     if (!isShort) return;
 
     await tx.ship.update({ where: { id: shipId }, data: { status: 'RECRUITING' } });
-    auditLogger.record({
-      type: 'ship.status_changed',
-      actorUserId,
-      organizationId: ship.organizationId,
-      targetId: shipId,
-      metadata: {
-        previousStatus: 'CONFIRMED',
-        newStatus: 'RECRUITING',
-        reason: 'shortage_after_assignment_change',
+    // Passed `tx` explicitly — this audit record must commit or roll back
+    // together with the ship-status write above, not as an independent
+    // statement that could succeed or fail on its own.
+    await auditLogger.record(
+      {
+        type: 'ship.status_changed',
+        actorUserId,
+        organizationId: ship.organizationId,
+        targetId: shipId,
+        metadata: {
+          previousStatus: 'CONFIRMED',
+          newStatus: 'RECRUITING',
+          reason: 'shortage_after_assignment_change',
+        },
       },
-    });
+      tx,
+    );
   }
 
   async function listAssignments(query: AssignmentListQuery): Promise<AssignmentListResponse> {
@@ -242,7 +385,8 @@ export function createAssignmentsService({
 
   async function createAssignment(input: CreateAssignmentRequest): Promise<AssignmentDto> {
     const context = getRequestContext();
-    await resolveTenantScopedTruckRequirement(prisma, input.truckRequirementId);
+    const requirement = await resolveTenantScopedTruckRequirement(prisma, input.truckRequirementId);
+    assertShipAcceptsAssignments(requirement.ship.status);
 
     // Driver is a TENANT_SCOPED_MODEL, so this findFirst is automatically
     // org-scoped by the extension — a cross-org driverId resolves to
@@ -254,19 +398,29 @@ export function createAssignmentsService({
 
     let assignment: AssignmentWithRelations;
     try {
-      assignment = await prisma.assignment.create({
-        data: {
-          // Explicit, not relied-on-implicitly — same reasoning as every
-          // other tenant-scoped create() in this codebase (see
-          // ships.service.ts's createShip): the extension injects this at
-          // runtime, but Prisma's generated create type can't see that.
-          organizationId: context.organizationId,
-          truckRequirementId: input.truckRequirementId,
-          driverId: input.driverId,
-          agreedRate: input.agreedRate,
-          createdByUserId: context.userId,
-        },
-        include: ASSIGNMENT_INCLUDE,
+      // Locks the truck requirement row before inserting — closes the
+      // other half of the TOCTOU race lockTruckRequirementRow's comment
+      // describes: without this, a new PENDING assignment could land in
+      // the gap of a concurrent updateTruckRequirement destination/truck-
+      // type change's guard check, exactly the scenario that guard exists
+      // to prevent.
+      assignment = await prisma.$transaction(async (tx) => {
+        await lockTruckRequirementRow(tx, requirement.shipId, input.truckRequirementId);
+        return tx.assignment.create({
+          data: {
+            // Explicit, not relied-on-implicitly — same reasoning as
+            // every other tenant-scoped create() in this codebase (see
+            // ships.service.ts's createShip): the extension injects this
+            // at runtime, but Prisma's generated create type can't see
+            // that.
+            organizationId: context.organizationId,
+            truckRequirementId: input.truckRequirementId,
+            driverId: input.driverId,
+            agreedRate: input.agreedRate,
+            createdByUserId: context.userId,
+          },
+          include: ASSIGNMENT_INCLUDE,
+        });
       });
     } catch (error) {
       // The partial unique index (truckRequirementId, driverId) WHERE
@@ -284,7 +438,7 @@ export function createAssignmentsService({
       throw error;
     }
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'assignment.created',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -295,12 +449,23 @@ export function createAssignmentsService({
     return toAssignmentDto(assignment);
   }
 
-  async function confirmAssignment(assignmentId: string): Promise<AssignmentDto> {
+  async function confirmAssignment(
+    assignmentId: string,
+    actor: AttemptActor = DEFAULT_ATTEMPT_ACTOR,
+  ): Promise<AssignmentDto> {
     const context = getRequestContext();
     const existing = await resolveOwnedAssignment(assignmentId);
     assertTransition(existing.status, 'CONFIRMED');
+    assertShipAcceptsAssignments(existing.truckRequirement.ship.status);
 
     await prisma.$transaction(async (tx) => {
+      // Locks the truck requirement row first — closes the TOCTOU race
+      // lockTruckRequirementRow's comment describes: without this, a
+      // concurrent updateTruckRequirement quantityNeeded-floor guard
+      // could read a stale confirmedCount and let quantityNeeded drop
+      // below the count this confirm is about to create.
+      await lockTruckRequirementRow(tx, existing.truckRequirement.shipId, existing.truckRequirementId);
+
       // Conditional update + affected-row-count check, not a plain
       // update() — the same atomic-race-prevention pattern already
       // chaos-tested for refresh-token rotation in Phase 1. Two
@@ -332,13 +497,13 @@ export function createAssignmentsService({
       }
 
       await tx.assignmentAttempt.create({
-        data: { assignmentId, outcome: 'CONFIRMED', recordedByUserId: context.userId },
+        data: { assignmentId, outcome: 'CONFIRMED', ...attemptRecordFields(actor, context.userId) },
       });
     });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'assignment.confirmed',
-      actorUserId: context.userId,
+      actorUserId: auditActorId(actor, context.userId),
       organizationId: context.organizationId,
       targetId: assignmentId,
     });
@@ -349,30 +514,40 @@ export function createAssignmentsService({
   async function rejectAssignment(
     assignmentId: string,
     input: RejectAssignmentRequest,
+    actor: AttemptActor = DEFAULT_ATTEMPT_ACTOR,
   ): Promise<AssignmentDto> {
     const context = getRequestContext();
     const existing = await resolveOwnedAssignment(assignmentId);
     assertTransition(existing.status, 'REJECTED');
 
-    const updated = await prisma.assignment.updateMany({
-      where: { id: assignmentId, status: 'PENDING' },
-      data: { status: 'REJECTED', respondedAt: new Date(), rejectionReason: input.reason },
-    });
-    if (updated.count === 0) {
-      throw new ConflictError('Assignment is no longer pending.');
-    }
-    await prisma.assignmentAttempt.create({
-      data: {
-        assignmentId,
-        outcome: 'REJECTED',
-        notes: input.reason,
-        recordedByUserId: context.userId,
-      },
+    // Conditional update + attempt record as one atomic unit — these were
+    // previously two independent statements, so a crash (or an unrelated
+    // concurrent transition, since the previous version had no update to
+    // roll back if the crash landed between them) between "assignment
+    // rejected" and "attempt logged" could leave a REJECTED assignment with
+    // no corresponding attempt row, silently dropping part of its history.
+    // Matches confirmAssignment's existing pattern.
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.assignment.updateMany({
+        where: { id: assignmentId, status: 'PENDING' },
+        data: { status: 'REJECTED', respondedAt: new Date(), rejectionReason: input.reason },
+      });
+      if (updated.count === 0) {
+        throw new ConflictError('Assignment is no longer pending.');
+      }
+      await tx.assignmentAttempt.create({
+        data: {
+          assignmentId,
+          outcome: 'REJECTED',
+          notes: input.reason,
+          ...attemptRecordFields(actor, context.userId),
+        },
+      });
     });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'assignment.rejected',
-      actorUserId: context.userId,
+      actorUserId: auditActorId(actor, context.userId),
       organizationId: context.organizationId,
       targetId: assignmentId,
       metadata: { reason: input.reason },
@@ -394,7 +569,7 @@ export function createAssignmentsService({
       throw new ConflictError('Assignment is no longer pending.');
     }
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'assignment.withdrawn',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -413,6 +588,8 @@ export function createAssignmentsService({
     assertTransition(existing.status, 'CANCELLED');
 
     await prisma.$transaction(async (tx) => {
+      await lockShipRow(tx, context.organizationId, existing.truckRequirement.shipId);
+
       const updated = await tx.assignment.updateMany({
         where: { id: assignmentId, status: 'CONFIRMED' },
         data: { status: 'CANCELLED', cancelledAt: new Date(), cancellationReason: input.reason },
@@ -427,7 +604,7 @@ export function createAssignmentsService({
       await revertShipIfNowShort(tx, existing.truckRequirement.shipId, context.userId);
     });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'assignment.cancelled',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -444,6 +621,8 @@ export function createAssignmentsService({
     assertTransition(existing.status, 'NO_SHOW');
 
     await prisma.$transaction(async (tx) => {
+      await lockShipRow(tx, context.organizationId, existing.truckRequirement.shipId);
+
       const updated = await tx.assignment.updateMany({
         where: { id: assignmentId, status: 'CONFIRMED' },
         data: { status: 'NO_SHOW', noShowAt: new Date() },
@@ -458,7 +637,7 @@ export function createAssignmentsService({
       await revertShipIfNowShort(tx, existing.truckRequirement.shipId, context.userId);
     });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'assignment.no_show',
       actorUserId: context.userId,
       organizationId: context.organizationId,
@@ -470,7 +649,8 @@ export function createAssignmentsService({
 
   async function logAttempt(
     assignmentId: string,
-    input: LogAttemptRequest,
+    input: LogAttemptInput,
+    actor: AttemptActor = DEFAULT_ATTEMPT_ACTOR,
   ): Promise<AssignmentAttemptDto> {
     const context = getRequestContext();
     await resolveOwnedAssignment(assignmentId);
@@ -485,13 +665,13 @@ export function createAssignmentsService({
         assignmentId,
         outcome: input.outcome,
         notes: input.notes,
-        recordedByUserId: context.userId,
+        ...attemptRecordFields(actor, context.userId),
       },
     });
 
-    auditLogger.record({
+    await auditLogger.record({
       type: 'assignment.attempt_logged',
-      actorUserId: context.userId,
+      actorUserId: auditActorId(actor, context.userId),
       organizationId: context.organizationId,
       targetId: assignmentId,
       metadata: { outcome: input.outcome },
