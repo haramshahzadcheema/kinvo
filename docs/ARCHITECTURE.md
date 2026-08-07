@@ -2240,3 +2240,28 @@ limitation in `apps/api/Dockerfile`'s own comment.
 against the full Docker stack a second time (health, malformed webhook,
 duplicate webhook collapsed to one processed job via BullMQ's own job-id
 dedup, worker boot log confirming the reconciliation scheduler registered).
+
+**Repository consolidation — a genuine reproducibility gap found and fixed
+(resolved 2026-08-07).** Verifying the repo builds from its *tracked*
+content alone (a fresh `git clone` + `pnpm install`, not the working
+directory's already-populated `node_modules`) surfaced a real bug: `prisma
+generate`'s output (`.prisma/client`) lands in a different location
+depending on how it's invoked. Run via `pnpm --filter @kinvo/api exec
+prisma generate` (or an equivalent `pnpm run <script>` targeting the
+package) it lands nested inside the pnpm store, which apps/api's `tsc`
+correctly resolves — this is the path every `build`/`prisma:generate` call
+in this project had always used, which is why the gap was invisible all
+session. Run via pnpm's own `postinstall` lifecycle hook — the first fix
+attempted here — it lands hoisted at the workspace root instead, which
+`tsc` does *not* resolve, producing dozens of `Property 'x' does not exist
+on type 'PrismaClient'` errors from a plain `pnpm install` alone. Confirmed
+by reproducing the failure twice (once at a deeply nested path, once at
+`C:\kverify` to rule out an unrelated Windows path-length issue) and then
+fixing it properly: no `postinstall` hook (removed after proving it
+generates to the wrong location); instead, `pnpm run prisma:generate` (new
+root script, delegating to apps/api's existing one) is now an explicit
+prerequisite of the root `typecheck`, `lint`, and `test` scripts, matching
+the `build:contracts` prerequisite pattern already used by the same
+scripts. Re-verified end to end from a completely fresh clone: `pnpm
+install` → `typecheck`/`lint`/`test` (209/209)/`build`, all green, with
+nothing carried over from any prior working directory state.
