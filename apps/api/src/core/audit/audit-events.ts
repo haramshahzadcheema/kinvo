@@ -25,6 +25,7 @@ export type AuditEventType =
   | 'assignment.attempt_logged'
   | 'yellow_zone.escalated'
   | 'yellow_zone.claimed'
+  | 'yellow_zone.unclaimed'
   | 'yellow_zone.resolved'
   | 'yellow_zone.dismissed';
 

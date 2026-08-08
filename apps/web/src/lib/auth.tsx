@@ -2,6 +2,7 @@ import type { AuthResponse, LoginRequest, RegisterOrganizationRequest } from '@k
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { apiPost, setAccessToken } from './apiClient';
 import { AuthContext, type AuthContextValue, type AuthState } from './AuthContext';
+import { refreshSession } from './sessionRefresh';
 
 function toAuthState(response: AuthResponse): AuthState {
   return {
@@ -9,28 +10,6 @@ function toAuthState(response: AuthResponse): AuthState {
     organization: response.organization,
     membership: response.membership,
   };
-}
-
-// Module-scoped, not component-scoped: React 18 StrictMode (dev only) runs
-// this component's mount effect twice in immediate succession (mount ->
-// cleanup -> mount), and the refresh-token cookie is single-use/rotating —
-// two concurrent POST /auth/refresh calls would race for the same cookie,
-// with only one able to redeem it (200) and the other getting a spurious
-// 401. Since request/response ordering isn't guaranteed to match effect
-// ordering, the *live* effect instance (the one StrictMode didn't discard)
-// could be the one that loses the race, incorrectly signing the user out
-// on a hard reload despite a perfectly valid session. Sharing one in-flight
-// promise across both invocations means the second one just awaits the
-// first's real network call instead of firing its own.
-let refreshInFlight: Promise<AuthResponse> | null = null;
-
-function refreshSession(): Promise<AuthResponse> {
-  if (!refreshInFlight) {
-    refreshInFlight = apiPost<AuthResponse>('/api/v1/auth/refresh').finally(() => {
-      refreshInFlight = null;
-    });
-  }
-  return refreshInFlight;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {

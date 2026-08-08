@@ -41,6 +41,22 @@ export function createRealtimeEmitter(): { emitToOrganization: EmitToOrganizatio
   const emitter = new Emitter(emitterRedisClient);
 
   const emitToOrganization: EmitToOrganization = (organizationId, event, payload) => {
+    // Debug-level, not info — this fires on every Yellow Zone state
+    // transition, so it's noise at the default LOG_LEVEL, but the one
+    // signal an on-call engineer actually needs when a dispatcher reports
+    // "the queue didn't update live": whether a publish was attempted at
+    // all, for which org/item. Never the payload itself — item.driverPhone
+    // is real PII, and there's no debugging value in it beyond what
+    // organizationId/targetId already gives. `@socket.io/redis-emitter`'s
+    // `.emit()` doesn't surface success/failure back to the caller (it's a
+    // fire-and-forget Redis PUBLISH under the hood, matching Socket.io's
+    // own emit semantics) — see emitterRedisClient's own `error` handler
+    // above for the one failure signal that IS observable, a dead Redis
+    // connection.
+    logger.debug(
+      { event, organizationId, targetId: payload.item.id },
+      'Realtime event emitted to organization room.',
+    );
     emitter.to(organizationRoom(organizationId)).emit(event, payload);
   };
 

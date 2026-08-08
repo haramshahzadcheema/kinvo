@@ -72,6 +72,31 @@ async function inviteViewer(
   return accept.body.accessToken as string;
 }
 
+/** A second, genuinely different authorized user in the same org — used by
+ * the ownership tests below, where "a different dispatcher" must mean a
+ * different `userId`, not just a second request from the same owner. */
+async function inviteDispatcher(
+  app: ReturnType<typeof buildAppWithContainer>['app'],
+  owner: { accessToken: string },
+) {
+  const invite = await request(app)
+    .post('/api/v1/organizations/invitations')
+    .set('Authorization', `Bearer ${owner.accessToken}`)
+    .send({ email: 'second-dispatcher@example.com', role: 'DISPATCHER' });
+  const accept = await request(app)
+    .post('/api/v1/auth/accept-invitation')
+    .send({
+      token: invite.body.inviteToken,
+      firstName: 'Dee',
+      lastName: 'Ispatcher',
+      password: 'correct-horse-battery-staple',
+    });
+  return {
+    accessToken: accept.body.accessToken as string,
+    userId: accept.body.user.id as string,
+  };
+}
+
 /** Places a call and resolves it to the given outcome — a SYSTEM_ERROR/
  * ambiguous outcome escalates into the Yellow Zone as a side effect,
  * exactly as it would in production (voice.service.ts's real code path,
@@ -326,6 +351,150 @@ describe('yellow-zone module — claim', () => {
       .get('/api/v1/yellow-zone')
       .set('Authorization', `Bearer ${viewerToken}`);
     expect(read.status).toBe(200);
+  });
+});
+
+describe('yellow-zone module — shared ownership (Phase 5 hardening decision)', () => {
+  it('a different authorized dispatcher can resolve an item claimed by someone else', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, item } = await setUpEscalatedItem(app, container);
+    const second = await inviteDispatcher(app, owner);
+
+    const claim = await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/claim`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(claim.status).toBe(200);
+    expect(claim.body.assignedToUserId).toBe(owner.userId);
+
+    // Dispatcher B, not the claimant, finishes it — intentional per the
+    // shared-team-ownership decision (see yellow-zone.service.ts's
+    // comment above claimYellowZoneItem), matching the exact precedent
+    // already set by assignments.service.ts's confirm/reject/cancel,
+    // none of which gate on createdByUserId either.
+    const resolve = await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/resolve`)
+      .set('Authorization', `Bearer ${second.accessToken}`)
+      .send({ resolutionNotes: 'Picked this up from my teammate, confirmed manually.' });
+
+    expect(resolve.status).toBe(200);
+    expect(resolve.body.status).toBe('RESOLVED');
+    // The record of WHO claimed it is preserved — shared ownership means
+    // anyone can finish it, not that the claim record itself is erased.
+    expect(resolve.body.assignedToUserId).toBe(owner.userId);
+  });
+
+  it('a different authorized dispatcher can dismiss an item claimed by someone else', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, item } = await setUpEscalatedItem(app, container);
+    const second = await inviteDispatcher(app, owner);
+
+    await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/claim`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    const dismiss = await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/dismiss`)
+      .set('Authorization', `Bearer ${second.accessToken}`)
+      .send({});
+
+    expect(dismiss.status).toBe(200);
+    expect(dismiss.body.status).toBe('DISMISSED');
+  });
+});
+
+describe('yellow-zone module — unclaim', () => {
+  it('lets the claimant release an item back to PENDING', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, item } = await setUpEscalatedItem(app, container);
+    await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/claim`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    const response = await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/unclaim`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('PENDING');
+    expect(response.body.assignedToUserId).toBeNull();
+  });
+
+  it('lets a different dispatcher claim it again after it is released', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, item } = await setUpEscalatedItem(app, container);
+    const second = await inviteDispatcher(app, owner);
+
+    await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/claim`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/unclaim`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    const reclaim = await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/claim`)
+      .set('Authorization', `Bearer ${second.accessToken}`);
+
+    expect(reclaim.status).toBe(200);
+    expect(reclaim.body.assignedToUserId).toBe(second.userId);
+  });
+
+  it('rejects unclaim from anyone other than the claimant', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, item } = await setUpEscalatedItem(app, container);
+    const second = await inviteDispatcher(app, owner);
+
+    await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/claim`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    const response = await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/unclaim`)
+      .set('Authorization', `Bearer ${second.accessToken}`);
+
+    expect(response.status).toBe(409);
+    const stored = await request(app)
+      .get(`/api/v1/yellow-zone/${item.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(stored.body.status).toBe('IN_REVIEW');
+    expect(stored.body.assignedToUserId).toBe(owner.userId);
+  });
+
+  it('rejects unclaiming an item that was never claimed', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, item } = await setUpEscalatedItem(app, container);
+
+    const response = await request(app)
+      .patch(`/api/v1/yellow-zone/${item.id}/unclaim`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    expect(response.status).toBe(409);
+  });
+});
+
+describe('yellow-zone module — assignment linkage', () => {
+  it('reports the underlying assignment\'s current status, and reflects it changing after escalation', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, assignmentId, item } = await setUpEscalatedItem(app, container);
+
+    expect(item.assignmentStatus).toBe('PENDING');
+
+    // Yellow Zone resolution deliberately does not touch Assignment (see
+    // yellow-zone.service.ts's module comment) — this proves the
+    // separation holds in both directions: a human resolving the
+    // Assignment through the normal flow does not silently resolve the
+    // Yellow Zone item, and the item's DTO surfaces the drift instead of
+    // hiding it.
+    await request(app)
+      .patch(`/api/v1/assignments/${assignmentId}/confirm`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    const refetched = await request(app)
+      .get(`/api/v1/yellow-zone/${item.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    expect(refetched.body.status).toBe('PENDING'); // Yellow Zone item itself is untouched
+    expect(refetched.body.assignmentStatus).toBe('CONFIRMED'); // but now visibly stale
   });
 });
 

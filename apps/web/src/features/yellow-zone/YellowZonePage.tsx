@@ -2,7 +2,9 @@ import type { YellowZoneItemDto, YellowZonePriorityValue, YellowZoneStatusValue 
 import { useState } from 'react';
 import { formatDateTime, formatRelativeTime } from '../../lib/format';
 import { useRealtimeConnection } from '../../lib/useRealtimeConnection';
-import { isApiError } from '../../lib/useAuth';
+import { isApiError, useAuth } from '../../lib/useAuth';
+import { ASSIGNMENT_STATUS_LABEL } from '../assignments/statusStyles';
+import { yellowZoneApi } from './api';
 import {
   YELLOW_ZONE_PRIORITY_DOTS,
   YELLOW_ZONE_PRIORITY_LABEL,
@@ -268,6 +270,7 @@ function YellowZoneDetailModal({
   onClaimed: (item: YellowZoneItemDto) => void;
   onViewAssignment: () => void;
 }) {
+  const { auth } = useAuth();
   const mutations = useYellowZoneMutations();
   const [actionMode, setActionMode] = useState<ActionMode>('none');
   const [notes, setNotes] = useState('');
@@ -275,20 +278,52 @@ function YellowZoneDetailModal({
 
   const statusStyle = YELLOW_ZONE_STATUS_STYLE[item.status];
   const priorityStyle = YELLOW_ZONE_PRIORITY_STYLE[item.priority];
-  const isMutating = mutations.claim.isPending || mutations.resolve.isPending || mutations.dismiss.isPending;
+  const isMutating =
+    mutations.claim.isPending ||
+    mutations.unclaim.isPending ||
+    mutations.resolve.isPending ||
+    mutations.dismiss.isPending;
+  const isClaimant = item.assignedToUserId !== null && item.assignedToUserId === auth?.user.id;
 
-  // claim() intentionally keeps the modal open (so a dispatcher can move
-  // straight into resolve/dismiss) — unlike resolve/dismiss's onClose(),
-  // it must hand the mutation's own response back to the parent so
-  // `item` (a snapshot passed down at open-time, not a live query result)
-  // reflects the new status/owner instead of silently going stale.
+  // claim()/unclaim() intentionally keep the modal open (so a dispatcher
+  // can move straight into resolve/dismiss, or reconsider after releasing)
+  // — unlike resolve/dismiss's onClose(), they must hand the mutation's
+  // own response back to the parent so `item` (a snapshot passed down at
+  // open-time, not a live query result) reflects the new status/owner
+  // instead of silently going stale.
   async function handleClaim() {
     setError(null);
     try {
       const updated = await mutations.claim.mutateAsync(item.id);
       onClaimed(updated);
     } catch (err) {
+      // A 409 here means someone else claimed it in the moment between
+      // this modal opening and the click — not a transient failure worth
+      // a raw error string. Fetch the item's real current state (the
+      // failed mutation gave us no fresh DTO to work with) and hand THAT
+      // to onClaimed, so the modal immediately reflects who actually has
+      // it instead of leaving the dispatcher looking at a dead "Claim"
+      // button for an item that already moved on.
+      if (isApiError(err) && err.status === 409) {
+        setError('Someone else just claimed this item — showing its current status.');
+        try {
+          onClaimed(await yellowZoneApi.get(item.id));
+        } catch {
+          // Best-effort refresh; the error message above still stands.
+        }
+        return;
+      }
       setError(isApiError(err) ? err.message : 'Could not claim this item.');
+    }
+  }
+
+  async function handleUnclaim() {
+    setError(null);
+    try {
+      const updated = await mutations.unclaim.mutateAsync(item.id);
+      onClaimed(updated);
+    } catch (err) {
+      setError(isApiError(err) ? err.message : 'Could not release this item.');
     }
   }
 
@@ -350,6 +385,21 @@ function YellowZoneDetailModal({
           {item.resolutionNotes && <DetailRow label="Resolution notes" value={item.resolutionNotes} />}
         </dl>
 
+        {/* Yellow Zone resolution deliberately never mutates the underlying
+            Assignment (see yellow-zone.service.ts's module comment) — a
+            dispatcher who separately confirmed/rejected the assignment
+            through the normal Assignments flow can leave this item looking
+            like it still needs attention when it doesn't. Purely
+            informational; no action here writes anything. */}
+        {(item.status === 'PENDING' || item.status === 'IN_REVIEW') &&
+          item.assignmentStatus !== 'PENDING' && (
+            <p className="mt-3 rounded-lg bg-[#EAF3F1] px-2.5 py-2 text-[11.5px] text-[#1E7A8C]">
+              The underlying assignment is already{' '}
+              <strong>{ASSIGNMENT_STATUS_LABEL[item.assignmentStatus]}</strong> — this item may just
+              need dismissing.
+            </p>
+          )}
+
         {error && <p className="mt-3 text-[11.5px] text-[#C1503B]">{error}</p>}
 
         {actionMode !== 'none' && (item.status === 'PENDING' || item.status === 'IN_REVIEW') && (
@@ -400,6 +450,19 @@ function YellowZoneDetailModal({
               className="flex-1 rounded-lg bg-[#1E7A8C] py-2 text-[12.5px] font-semibold text-white hover:bg-[#175F6E]"
             >
               Resolve
+            </button>
+          )}
+          {/* Claimant-only — see the ownership-model comment in
+              yellow-zone.service.ts. Not shown to other dispatchers even
+              though the backend's own 403/409 would catch a stray click;
+              this is UX clarity, not the authorization boundary itself. */}
+          {item.status === 'IN_REVIEW' && actionMode === 'none' && isClaimant && (
+            <button
+              onClick={handleUnclaim}
+              disabled={isMutating}
+              className="flex-1 rounded-lg border border-[#ECE1CC] py-2 text-[12.5px] font-semibold text-[#5C6B75] hover:bg-[#F3EDDD] disabled:opacity-50"
+            >
+              Release
             </button>
           )}
           {(item.status === 'PENDING' || item.status === 'IN_REVIEW') && actionMode === 'none' && (

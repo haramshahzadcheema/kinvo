@@ -60,6 +60,11 @@ export function useYellowZoneMutations() {
     onSuccess: invalidate,
   });
 
+  const unclaim = useMutation({
+    mutationFn: (id: string) => yellowZoneApi.unclaim(id),
+    onSuccess: invalidate,
+  });
+
   const resolve = useMutation({
     mutationFn: ({ id, input }: { id: string; input: ResolveYellowZoneRequest }) =>
       yellowZoneApi.resolve(id, input),
@@ -72,5 +77,5 @@ export function useYellowZoneMutations() {
     onSuccess: invalidate,
   });
 
-  return { claim, resolve, dismiss };
+  return { claim, unclaim, resolve, dismiss };
 }

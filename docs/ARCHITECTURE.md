@@ -2568,3 +2568,143 @@ Yellow Zone integration tests, 7 new realtime tests, and 12 new
 classification unit tests), clean typecheck/lint/build across all three
 workspaces, Phases 0–4 untouched and still fully green, working tree
 reviewed for unrelated changes before commit.
+
+## Phase 5 hardening pass
+
+A dedicated adversarial audit against the already-implemented, already-
+committed Phase 5 — re-verifying every claim against actual source rather
+than trusting the section above (including catching two inaccuracies in
+that section's own doc comments, see below) — found one real production
+gap, several product-semantics decisions that had been left implicit
+rather than made, and a genuine frontend test-coverage hole. Fixed here;
+nothing was rebuilt or redesigned.
+
+**The one real bug: socket reconnect could get permanently stuck on a
+stale token.** `connectSocket` (`apps/web/src/lib/socket.ts`) originally
+passed `auth: { token }` as a static object captured once at connection
+time. Socket.io-client replays that exact object on every automatic
+reconnect attempt — so a socket that outlived one disconnect/reconnect
+cycle past `JWT_ACCESS_TTL` (15 minutes; not a contrived scenario for a
+dispatcher's tab left open a whole shift) would reconnect with an expired
+token forever, since nothing in this app refreshes the access token
+proactively. Fixed with the callback form of socket.io's `auth` option,
+reading `apiClient.ts`'s current token fresh on every attempt, plus a
+`connect_error` handler in `RealtimeProvider.tsx` that reuses
+`auth.tsx`'s existing `refreshSession()` (exported for exactly this, not
+a second refresh implementation) to redeem a fresh token the moment a
+reconnect is rejected for an expired one, then retries immediately rather
+than waiting out socket.io's own backoff. If the refresh itself fails —
+the refresh-token cookie is genuinely dead, not just the access token —
+this deliberately does nothing further: there is no session left to
+recover, and inventing a second recovery path would be exactly the
+parallel auth system the fix was scoped to avoid. Proven with
+`apps/web/src/lib/socket.test.ts` (the live-read half) and
+`RealtimeProvider.test.tsx` (the refresh-and-retry half, including that
+a failed refresh doesn't force a retry and that concurrent connect_error
+events don't stack a second refresh call) — a full real-socket-against-a-
+real-server-with-a-genuinely-expired-token end-to-end run was not
+performed (would need either live JWT-expiry manipulation inside a
+running integration test or a multi-minute real wait); the fix is proven
+by direct test of the actual new logic and code inspection, not a fake
+full-stack demonstration.
+
+**Product decisions made explicit, not guessed at.** The original Phase 5
+pass shipped two real ambiguities without resolving them:
+
+- *Can a different dispatcher finish a colleague's claimed item?* Yes,
+  intentionally — kept as-is (no code change), because `assignments.
+  service.ts`'s own `confirmAssignment`/`rejectAssignment`/
+  `cancelAssignment`/`markNoShow` never gate on `createdByUserId` either;
+  every action on a shared resource in this codebase is available to any
+  teammate with the right RBAC permission, not just whoever touched it
+  first. Documented directly above `claimYellowZoneItem` in
+  `yellow-zone.service.ts`, and proven with two new regression tests
+  (`test/integration/yellow-zone.test.ts`'s "shared ownership" describe
+  block) rather than left as an untested assumption.
+- *No way to release a claim.* An `IN_REVIEW` item that its claimant never
+  finishes had no path back to `PENDING` — it just silently dropped out of
+  the "needs attention" signal forever. Added `PATCH /yellow-zone/:id/
+  unclaim`, using the same conditional-`updateMany`-plus-affected-row-count
+  pattern every other transition here already uses. Deliberately
+  claimant-only (unlike resolve/dismiss) — releasing is "let go of what I
+  grabbed," a materially more disruptive action to hand to a bystander than
+  finishing already-claimed work, since it can strand whoever's mid-call
+  with the driver. The frontend hides the "Release" button from non-
+  claimants for clarity; the actual enforcement is server-side, matching
+  the codebase's existing button-hiding-is-not-authorization convention.
+
+**Assignment/Yellow Zone linkage: informative, not coupling.** Resolving
+or dismissing a Yellow Zone item still deliberately never touches
+`Assignment.status` — "operator acknowledged an automation failure" and
+"the assignment itself is resolved" remain two separate facts, and
+auto-mutating one from the other risks a much worse class of bug than the
+one being fixed (a Yellow Zone action silently confirming/rejecting an
+assignment the dispatcher never actually verified). What changed:
+`YellowZoneItemDto` gained an additive `assignmentStatus` field (a wider
+Prisma `select`, no schema migration — the join was already being walked
+for every other field), and the detail modal now shows an informational
+hint ("The underlying assignment is already Confirmed — this item may
+just need dismissing") when a human resolved the real problem through the
+normal Assignments flow while the escalation sat open. Repeated-escalation
+grouping for one assignment (the same audit's other UX finding) was
+deliberately **not** built in this pass — it needs a real query-shape
+decision (a per-item related-count computation interacting with
+pagination) that deserves its own focused pass, not a bolt-on here; tracked
+as a known gap, not fixed.
+
+**Frontend test coverage: the actual gap that let the modal-staleness bug
+through.** Backend Yellow Zone coverage was already thorough; the
+frontend had exactly two generic smoke tests for the whole app. Added
+`YellowZonePage.test.tsx` (18 cases covering every state-machine
+transition, loading/error/empty states, the 409-claim-race UX below, and
+— explicitly — the exact "modal stays stale after claim" regression this
+whole pass started from) plus `socket.test.ts`/`RealtimeProvider.test.tsx`
+(6 cases for the P0 fix itself). Building these surfaced a real, general
+gap in the project's own test setup: `@testing-library/react`'s
+auto-cleanup hook never self-registers in this repo's Vitest config
+(`test.globals` isn't set, so there's no global `afterEach` for it to
+attach to), meaning a rendered tree from one test stayed mounted into the
+next test in the same file — invisible for `App.test.tsx`'s two tests
+(they assert non-overlapping text) but a guaranteed false failure the
+moment two tests in one file render overlapping content, exactly what a
+real Yellow Zone test suite does constantly. Fixed once, project-wide, in
+`src/test/setup.ts` (`afterEach(cleanup)`), not duplicated per test file.
+
+**Claim-race UX.** A `409` on claim (someone else claimed it first) used
+to surface as a raw error string with a dead "Claim" button still showing.
+Now fetches the item's real current state and feeds it through the same
+`onClaimed` plumbing the successful-claim path already uses, with a
+plain-language message — "Someone else just claimed this item — showing
+its current status" — rather than inventing a second update path for the
+failure case.
+
+**Documentation corrections** (code was already correct; the comments
+describing it weren't): `YellowZoneItem`'s schema comment claimed
+`driverId`/`shipId` let the queue "render without joining back through
+Assignment" — false; `toYellowZoneItemDto` always joins through
+`assignmentAttempt → assignment → driver/truckRequirement/ship`
+regardless, and neither column is used for filtering. `socketServer.ts`'s
+comment claimed the frontend "reconnects with a fresh token on every
+REST-triggered refresh" — also false as originally written (no such
+trigger existed anywhere in the app); now accurate, describing the actual
+mechanism this pass built.
+
+**Explicitly deferred, not fixed — matching this pass's own "harden, don't
+redesign" scope:** repeated-escalation grouping (see above); Yellow
+Zone-specific rate limiting (consistent with ships/drivers/assignments,
+none of which have any either); the Redis adapter's untested multi-instance
+behavior (correct by construction with one API instance, genuinely
+untested with two — no second instance exists in this repo's Docker
+topology to test against); the dead-code P2002 guard in
+`createEscalationForAttempt` around `assignmentAttemptId` (harmless
+defense-in-depth; the real protection for the concurrent-webhook race it
+was written for is `AssignmentAttempt.externalCallId`'s own unique
+constraint, one layer up); general REST-layer 401-triggers-refresh-and-
+retry (a larger, pre-existing, Phase-1-era gap this pass's socket fix
+does not extend to — the socket fix reuses the existing refresh mechanism
+reactively on its own failure signal, it does not add one to `apiClient.ts`
+itself).
+
+**Final state:** 261 backend tests + 26 frontend tests, all passing;
+clean typecheck/lint/build across all three workspaces; Phases 0–4 and
+the original Phase 5 implementation unchanged in behavior throughout.

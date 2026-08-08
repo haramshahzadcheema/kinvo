@@ -532,6 +532,22 @@ model AuditLogEntry {
 // AuditLogEntry.actorUserId: written by exactly one call site (the voice
 // module's escalation helper, from already-validated data), never from
 // user input, so DB-level referential enforcement adds no real safety here.
+//
+// CORRECTION (Phase 5 hardening pass): an earlier version of this comment
+// justified driverId/shipId as letting the queue "render without joining
+// back through Assignment" — that was never actually true.
+// yellow-zone.service.ts's toYellowZoneItemDto still joins through
+// assignmentAttempt -> assignment -> driver/truckRequirement/ship for
+// every list/get call (driverName/shipName/destination/truckType all come
+// from that join, not from these columns), and neither column is used for
+// filtering (yellowZoneListQuerySchema has no driverId/shipId filter).
+// Their only actual value today is as a fallback identity pointer if
+// Assignment/Driver/Ship rows were ever deleted out from under a
+// historical Yellow Zone item — currently theoretical, since nothing in
+// this schema deletes any of the three (Assignment has no delete flow at
+// all; Driver/Ship deletion, if it existed, would hit onDelete: Restrict
+// via Assignment first). Kept because they're cheap and harmless, not
+// because they save a join.
 model YellowZoneItem {
   id                  String             @id @default(cuid())
   organizationId      String

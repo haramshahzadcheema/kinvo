@@ -33,6 +33,7 @@ export const yellowZoneApi = {
   stats: () => apiGet<YellowZoneStatusCounts>('/api/v1/yellow-zone/stats'),
   get: (id: string) => apiGet<YellowZoneItemDto>(`/api/v1/yellow-zone/${id}`),
   claim: (id: string) => apiPatch<YellowZoneItemDto>(`/api/v1/yellow-zone/${id}/claim`),
+  unclaim: (id: string) => apiPatch<YellowZoneItemDto>(`/api/v1/yellow-zone/${id}/unclaim`),
   resolve: (id: string, body: ResolveYellowZoneRequest) =>
     apiPatch<YellowZoneItemDto>(`/api/v1/yellow-zone/${id}/resolve`, body),
   dismiss: (id: string, body: DismissYellowZoneRequest) =>

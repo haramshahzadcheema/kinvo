@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assignmentStatusSchema } from './assignment.schema';
 import { paginationQuerySchema } from './pagination.schema';
 
 // Phase 5's escalation queue — one row per SYSTEM_ERROR AssignmentAttempt
@@ -27,6 +28,16 @@ export const yellowZoneItemSchema = z.object({
   reason: z.string(),
   priority: yellowZonePrioritySchema,
   status: yellowZoneStatusSchema,
+  // The underlying Assignment's CURRENT status — always PENDING at the
+  // moment an escalation is created (SYSTEM_ERROR only ever fires against
+  // a still-pending assignment, see voice.service.ts), but not necessarily
+  // still PENDING by the time a dispatcher opens this item: resolving/
+  // dismissing a Yellow Zone item deliberately does NOT mutate Assignment
+  // (see yellow-zone.service.ts's module comment for why), so if a human
+  // confirmed/rejected the assignment through the normal Assignments flow
+  // in the meantime, this field is what lets the UI say so rather than
+  // silently showing a stale "needs attention."
+  assignmentStatus: assignmentStatusSchema,
   assignedToUserId: z.string().nullable(),
   assignedToUserName: z.string().nullable(),
   resolutionNotes: z.string().nullable(),

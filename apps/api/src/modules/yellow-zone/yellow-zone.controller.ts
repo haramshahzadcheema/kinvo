@@ -7,6 +7,7 @@ export interface YellowZoneController {
   getYellowZoneStatusCounts: RequestHandler;
   getYellowZoneItem: RequestHandler;
   claimYellowZoneItem: RequestHandler;
+  unclaimYellowZoneItem: RequestHandler;
   resolveYellowZoneItem: RequestHandler;
   dismissYellowZoneItem: RequestHandler;
 }
@@ -52,6 +53,15 @@ export function createYellowZoneController(
     }
   };
 
+  const unclaimYellowZoneItem: RequestHandler = async (req, res, next) => {
+    try {
+      const item = await yellowZoneService.unclaimYellowZoneItem(req.params.itemId as string);
+      res.status(200).json(item);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   const resolveYellowZoneItem: RequestHandler = async (req, res, next) => {
     try {
       const item = await yellowZoneService.resolveYellowZoneItem(
@@ -81,6 +91,7 @@ export function createYellowZoneController(
     getYellowZoneStatusCounts,
     getYellowZoneItem,
     claimYellowZoneItem,
+    unclaimYellowZoneItem,
     resolveYellowZoneItem,
     dismissYellowZoneItem,
   };

@@ -41,13 +41,18 @@ function organizationRoom(organizationId: string): string {
  * own verified token.
  *
  * A revoked/expired token is only checked at connect time, not on a
- * mid-session timer — bounded by the same JWT_ACCESS_TTL staleness window
- * REST already accepts (authenticate.ts's own comment: "the access token's
- * short TTL is the bound on how stale a claim can be"). The frontend socket
- * client reconnects with a fresh token on every REST-triggered refresh, so
- * in practice this window rarely lasts as long as the TTL itself. Adding a
- * per-socket expiry timer to close that already-accepted, already-bounded
- * gap tighter was considered and left out — see the Phase 5 Decisions log.
+ * mid-session timer — an already-established connection is not re-verified
+ * for the rest of its lifetime, only at each (re)connect. What bounds this
+ * in practice: the frontend's `connectSocket` (apps/web/src/lib/socket.ts)
+ * reads the current access token fresh on every connection attempt,
+ * including automatic reconnects, and `RealtimeProvider`'s `connect_error`
+ * handler proactively redeems the refresh-token cookie the moment a
+ * (re)connect is rejected for an expired token, then retries immediately —
+ * so an established connection can go stale for as long as it stays
+ * connected, but every reconnect attempt self-heals rather than repeating
+ * the same expired token indefinitely. Adding a per-socket expiry timer to
+ * also bound an already-connected socket's staleness was considered and
+ * left out — see the Phase 5 hardening-pass entry in the Decisions log.
  */
 export function createRealtimeServer(
   httpServer: HttpServer,

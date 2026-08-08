@@ -37,6 +37,15 @@ export interface YellowZoneService {
   getYellowZoneStatusCounts(): Promise<YellowZoneStatusCounts>;
   getYellowZoneItem(id: string): Promise<YellowZoneItemDto>;
   claimYellowZoneItem(id: string): Promise<YellowZoneItemDto>;
+  /**
+   * Claimant-only, unlike resolve/dismiss (see those functions' own doc
+   * comments for why the two are intentionally asymmetric). Releases an
+   * item back to PENDING without resolving anything — for a dispatcher who
+   * claimed an item and then got pulled away, so it doesn't sit invisible
+   * (an IN_REVIEW item drops out of the PENDING "needs attention" signal
+   * with no other way back in).
+   */
+  unclaimYellowZoneItem(id: string): Promise<YellowZoneItemDto>;
   resolveYellowZoneItem(id: string, input: ResolveYellowZoneRequest): Promise<YellowZoneItemDto>;
   dismissYellowZoneItem(id: string, input: DismissYellowZoneRequest): Promise<YellowZoneItemDto>;
   /**
@@ -60,6 +69,7 @@ const YELLOW_ZONE_CONTEXT_INCLUDE = {
       assignmentId: true,
       assignment: {
         select: {
+          status: true,
           driver: { select: { fullName: true, phone: true } },
           truckRequirement: {
             select: {
@@ -95,6 +105,7 @@ function toYellowZoneItemDto(item: YellowZoneItemWithContext): YellowZoneItemDto
     reason: item.reason,
     priority: item.priority,
     status: item.status,
+    assignmentStatus: assignment.status,
     assignedToUserId: item.assignedToUserId,
     assignedToUserName: item.assignedToUser
       ? `${item.assignedToUser.firstName} ${item.assignedToUser.lastName}`
@@ -170,6 +181,28 @@ export function createYellowZoneService({
     return toYellowZoneItemDto(await resolveOwnedYellowZoneItem(id));
   }
 
+  // Ownership model (Phase 5 hardening pass, decided rather than left
+  // implicit): claiming an item records WHO is on it, but does not gate
+  // who may finish it — resolveYellowZoneItem/dismissYellowZoneItem below
+  // deliberately do not check `assignedToUserId === context.userId`. This
+  // matches the existing precedent set by assignments.service.ts's own
+  // confirmAssignment/rejectAssignment/cancelAssignment/markNoShow, none of
+  // which check `createdByUserId` as an authorization gate either — every
+  // action on a shared resource in this codebase is available to any
+  // teammate with the right RBAC permission, not just whoever touched it
+  // first. A shift handoff (dispatcher A claims an item, then hands off to
+  // dispatcher B, who finishes it) should not require impersonating A.
+  // Proven with a dedicated regression test — see
+  // test/integration/yellow-zone.test.ts's "a different authorized
+  // dispatcher can resolve an item claimed by someone else".
+  //
+  // unclaimYellowZoneItem is the one exception, and deliberately so: it's
+  // a "let go of what I grabbed" action, not a "finish someone's work"
+  // action — letting any teammate silently un-assign another dispatcher's
+  // active claim (possibly mid-call with the driver) is a materially
+  // different, more disruptive kind of interference than letting them
+  // complete it, so that one IS gated to the claimant. See its own doc
+  // comment on the YellowZoneService interface above.
   async function claimYellowZoneItem(id: string): Promise<YellowZoneItemDto> {
     const context = getRequestContext();
     await resolveOwnedYellowZoneItem(id); // 404s before the conflict-vs-not-found distinction matters
@@ -189,6 +222,38 @@ export function createYellowZoneService({
 
     await auditLogger.record({
       type: 'yellow_zone.claimed',
+      actorUserId: context.userId,
+      organizationId: context.organizationId,
+      targetId: id,
+    });
+
+    const item = await resolveOwnedYellowZoneItem(id);
+    emitToOrganization(context.organizationId, YELLOW_ZONE_UPDATED, {
+      item: toYellowZoneItemDto(item),
+    });
+    return toYellowZoneItemDto(item);
+  }
+
+  async function unclaimYellowZoneItem(id: string): Promise<YellowZoneItemDto> {
+    const context = getRequestContext();
+    await resolveOwnedYellowZoneItem(id);
+
+    // Claimant-gated, unlike claim/resolve/dismiss — see the ownership-model
+    // comment above claimYellowZoneItem. A single WHERE clause covering
+    // both "not IN_REVIEW" and "claimed by someone else" in one conditional
+    // update, same pattern as every other transition here: one 409 message
+    // covers both cases, matching resolve's own economy (it doesn't
+    // separately distinguish "still PENDING" from "already terminal").
+    const updated = await prisma.yellowZoneItem.updateMany({
+      where: { id, status: 'IN_REVIEW', assignedToUserId: context.userId },
+      data: { status: 'PENDING', assignedToUserId: null },
+    });
+    if (updated.count === 0) {
+      throw new ConflictError('Only the dispatcher who claimed this item can release it.');
+    }
+
+    await auditLogger.record({
+      type: 'yellow_zone.unclaimed',
       actorUserId: context.userId,
       organizationId: context.organizationId,
       targetId: id,
@@ -345,6 +410,7 @@ export function createYellowZoneService({
     getYellowZoneStatusCounts,
     getYellowZoneItem,
     claimYellowZoneItem,
+    unclaimYellowZoneItem,
     resolveYellowZoneItem,
     dismissYellowZoneItem,
     createEscalationForAttempt,

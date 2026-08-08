@@ -35,6 +35,15 @@ export function createYellowZoneRouter(
   router.get('/:itemId', authorize('yellow-zone:read'), controller.getYellowZoneItem);
 
   router.patch('/:itemId/claim', authorize('yellow-zone:manage'), controller.claimYellowZoneItem);
+  // Claimant-only, enforced in yellow-zone.service.ts — the route only
+  // gates on the yellow-zone:manage RBAC action, same as claim/resolve/
+  // dismiss; per-item ownership is a service-layer concern, not a routing
+  // one (matches the rest of this module's shape).
+  router.patch(
+    '/:itemId/unclaim',
+    authorize('yellow-zone:manage'),
+    controller.unclaimYellowZoneItem,
+  );
   router.patch(
     '/:itemId/resolve',
     authorize('yellow-zone:manage'),
