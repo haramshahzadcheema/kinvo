@@ -69,6 +69,7 @@ export interface AssignmentsService {
     assignmentId: string,
     input: LogAttemptInput,
     actor?: AttemptActor,
+    tx?: TransactionClient,
   ): Promise<AssignmentAttemptDto>;
 }
 
@@ -651,16 +652,26 @@ export function createAssignmentsService({
     assignmentId: string,
     input: LogAttemptInput,
     actor: AttemptActor = DEFAULT_ATTEMPT_ACTOR,
+    tx?: TransactionClient,
   ): Promise<AssignmentAttemptDto> {
     const context = getRequestContext();
     await resolveOwnedAssignment(assignmentId);
+
+    // Optional external transaction — same shape as auditLogger.record's
+    // own `tx?` parameter, for the same reason: a caller that needs this
+    // write to commit-or-rollback atomically with something else (Phase
+    // 5's Yellow Zone escalation, created alongside a SYSTEM_ERROR attempt
+    // — see voice.service.ts) supplies its own `tx`; every existing call
+    // site (routes -> controllers, with no such requirement) omits it and
+    // gets the original single-statement-write behavior unchanged.
+    const client = tx ?? prisma;
 
     // The resource this endpoint creates is the attempt, not the parent
     // assignment — returning the attempt itself (rather than the whole
     // Assignment with the caller left to dig it out of `attempts[0]`) is
     // both the more correct REST shape and lets a caller know exactly
     // which row it just created without trusting array ordering.
-    const attempt = await prisma.assignmentAttempt.create({
+    const attempt = await client.assignmentAttempt.create({
       data: {
         assignmentId,
         outcome: input.outcome,
@@ -669,13 +680,16 @@ export function createAssignmentsService({
       },
     });
 
-    await auditLogger.record({
-      type: 'assignment.attempt_logged',
-      actorUserId: auditActorId(actor, context.userId),
-      organizationId: context.organizationId,
-      targetId: assignmentId,
-      metadata: { outcome: input.outcome },
-    });
+    await auditLogger.record(
+      {
+        type: 'assignment.attempt_logged',
+        actorUserId: auditActorId(actor, context.userId),
+        organizationId: context.organizationId,
+        targetId: assignmentId,
+        metadata: { outcome: input.outcome },
+      },
+      tx,
+    );
 
     return toAssignmentAttemptDto(attempt);
   }

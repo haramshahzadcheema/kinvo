@@ -38,11 +38,12 @@ model Organization {
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 
-  memberships Membership[]
-  invitations Invitation[]
-  ships       Ship[]
-  drivers     Driver[]
-  assignments Assignment[]
+  memberships     Membership[]
+  invitations     Invitation[]
+  ships           Ship[]
+  drivers         Driver[]
+  assignments     Assignment[]
+  yellowZoneItems YellowZoneItem[]
 
   @@map("organizations")
 }
@@ -58,11 +59,12 @@ model User {
   updatedAt    DateTime   @updatedAt
   lastLoginAt  DateTime?
 
-  memberships        Membership[]
-  refreshTokens      RefreshToken[]
-  sentInvitations    Invitation[]        @relation("InvitationInvitedBy")
-  createdAssignments Assignment[]        @relation("AssignmentCreatedBy")
-  recordedAttempts   AssignmentAttempt[] @relation("AssignmentAttemptRecordedBy")
+  memberships            Membership[]
+  refreshTokens          RefreshToken[]
+  sentInvitations        Invitation[]        @relation("InvitationInvitedBy")
+  createdAssignments     Assignment[]        @relation("AssignmentCreatedBy")
+  recordedAttempts       AssignmentAttempt[] @relation("AssignmentAttemptRecordedBy")
+  claimedYellowZoneItems YellowZoneItem[]    @relation("YellowZoneItemAssignedTo")
 
   @@map("users")
 }
@@ -380,6 +382,7 @@ model AssignmentAttempt {
   // this field can be in, not a new one this relation introduces.
   recordedByUser User?               @relation("AssignmentAttemptRecordedBy", fields: [recordedByUserId], references: [id], onDelete: SetNull)
   webhookEvents  VoiceWebhookEvent[]
+  yellowZoneItem YellowZoneItem?
 
   @@index([assignmentId, attemptedAt])
   @@map("assignment_attempts")
@@ -491,6 +494,85 @@ model AuditLogEntry {
   @@index([organizationId, createdAt])
   @@index([organizationId, targetId])
   @@map("audit_log_entries")
+}
+
+// Phase 5: the human-review queue for an outbound confirmation call CALL-E
+// could not resolve — SYSTEM_ERROR outcomes only (a malformed/unrecognized
+// provider response, a genuine CALL-E-side failure, or Kinvo's own
+// reconciliation timeout; see core/voice/outcomeTranslation.ts). This is
+// deliberately NOT built against a literal inbound-call concept: the
+// installed @call-e/calle SDK (v0.6.0, verified from its generated OpenAPI
+// schema, not assumed) exposes no inbound-call primitive at all —
+// `WebhookEventType` is a closed `"call.completed" | "call.failed" |
+// "call.result_validation_failed"` enum, and `CalleCalls` has no method to
+// provision a number or receive one. "An automated call CALL-E can't
+// resolve" is answered here by an unresolved OUTBOUND call, not a fictional
+// inbound one — see docs/ARCHITECTURE.md's Phase 5 Decisions log for the
+// full reasoning and the product-owner decision (Option A) that resolved
+// this.
+//
+// One row per AssignmentAttempt that reached SYSTEM_ERROR — created inside
+// the SAME transaction as that attempt (see voice.service.ts), never as a
+// separate follow-up write, so a crash between the two is not a state this
+// table can end up in. assignmentAttemptId's unique constraint is what
+// makes a duplicate webhook/reconciliation delivery a safe no-op: the
+// AssignmentAttempt itself is only ever created once per terminal event
+// (Phase 4's existing idempotency), so a YellowZoneItem 1:1 against it
+// inherits that same guarantee for free, with no separate dedup mechanism
+// needed.
+//
+// Deliberately tenant-scoped via the Prisma extension (added to
+// core/prisma.ts's TENANT_SCOPED_MODELS) — unlike AssignmentAttempt/
+// VoiceCallPlacement, which opted out because every access to them walks
+// through an already-owned Assignment first. A dispatcher's Yellow Zone
+// queue is the opposite access shape: a direct top-level list/filter
+// query, the same as Ship/Driver, not a sub-resource reached through a
+// parent. driverId/shipId are plain denormalized strings, not enforced
+// FKs — same reasoning as AssignmentAttempt.provider and
+// AuditLogEntry.actorUserId: written by exactly one call site (the voice
+// module's escalation helper, from already-validated data), never from
+// user input, so DB-level referential enforcement adds no real safety here.
+model YellowZoneItem {
+  id                  String             @id @default(cuid())
+  organizationId      String
+  assignmentAttemptId String             @unique
+  driverId            String
+  shipId              String
+  reason              String
+  priority            YellowZonePriority
+  status              YellowZoneStatus   @default(PENDING)
+  assignedToUserId    String?
+  resolutionNotes     String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  resolvedAt          DateTime?
+
+  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignmentAttempt AssignmentAttempt @relation(fields: [assignmentAttemptId], references: [id], onDelete: Cascade)
+  // SetNull, matching AssignmentAttempt.recordedByUserId's exact precedent —
+  // "we no longer know who claimed this" is an acceptable state if a user
+  // is ever removed, not a reason to block the removal or delete the item.
+  assignedToUser    User?             @relation("YellowZoneItemAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  // Every list query this table serves is "this org's queue, filtered by
+  // status" (the default view) or "...by priority" — same reasoning as
+  // Assignment's own (organizationId, status) composite index.
+  @@index([organizationId, status])
+  @@index([organizationId, priority])
+  @@map("yellow_zone_items")
+}
+
+enum YellowZoneStatus {
+  PENDING
+  IN_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+enum YellowZonePriority {
+  LOW
+  MEDIUM
+  HIGH
 }
 
 enum AssignmentStatus {

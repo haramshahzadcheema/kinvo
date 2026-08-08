@@ -17,6 +17,7 @@ import { createHealthRouter } from './modules/health/health.routes';
 import { createOrganizationsRouter } from './modules/organizations/organizations.routes';
 import { createShipsRouter } from './modules/ships/ships.routes';
 import { createVoiceRouters } from './modules/voice/voice.routes';
+import { createYellowZoneRouter } from './modules/yellow-zone/yellow-zone.routes';
 
 export function createApp(container: Container): Express {
   const app = express();
@@ -71,6 +72,10 @@ export function createApp(container: Container): Express {
   // change to assignments.routes.ts itself.
   app.use('/api/v1/assignments', voiceRouters.actionsRouter);
   app.use('/api/v1/voice-calls', voiceRouters.callsRouter);
+  app.use(
+    '/api/v1/yellow-zone',
+    createYellowZoneRouter(container.yellowZoneService, authenticate),
+  );
 
   app.use(notFoundHandler);
   app.use(errorHandler);

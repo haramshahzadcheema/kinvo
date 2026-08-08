@@ -21,7 +21,9 @@ export type Action =
   | 'ships:read'
   | 'ships:manage'
   | 'drivers:read'
-  | 'drivers:manage';
+  | 'drivers:manage'
+  | 'yellow-zone:read'
+  | 'yellow-zone:manage';
 
 const ORGANIZATION_MANAGEMENT_ACTIONS: readonly Action[] = [
   'members:read',
@@ -46,13 +48,23 @@ const LOGISTICS_ACTIONS: readonly Action[] = [
   'drivers:manage',
 ];
 
+// Phase 5's Yellow Zone gets its own action pair rather than folding into
+// LOGISTICS_ACTIONS — resolving an escalation is a distinct capability
+// from managing ships/drivers (ARCHITECTURE.md §7 names it separately:
+// "DISPATCHER... resolve Yellow Zone"), and a future role split (e.g. a
+// read-only auditor who can see ships but shouldn't claim escalations)
+// shouldn't require re-deriving it out of a bundle it was never
+// conceptually part of.
+const YELLOW_ZONE_ACTIONS: readonly Action[] = ['yellow-zone:read', 'yellow-zone:manage'];
+
 const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
-  OWNER: new Set([...ORGANIZATION_MANAGEMENT_ACTIONS, ...LOGISTICS_ACTIONS]),
-  ADMIN: new Set([...ORGANIZATION_MANAGEMENT_ACTIONS, ...LOGISTICS_ACTIONS]),
-  // DISPATCHER is the primary persona for ships/drivers (ARCHITECTURE.md
-  // §7) — full manage access there, but still read-only on org membership.
-  DISPATCHER: new Set<Action>(['members:read', ...LOGISTICS_ACTIONS]),
-  VIEWER: new Set<Action>(['members:read', 'ships:read', 'drivers:read']),
+  OWNER: new Set([...ORGANIZATION_MANAGEMENT_ACTIONS, ...LOGISTICS_ACTIONS, ...YELLOW_ZONE_ACTIONS]),
+  ADMIN: new Set([...ORGANIZATION_MANAGEMENT_ACTIONS, ...LOGISTICS_ACTIONS, ...YELLOW_ZONE_ACTIONS]),
+  // DISPATCHER is the primary persona for ships/drivers AND Yellow Zone
+  // resolution (ARCHITECTURE.md §7) — full manage access on both, but
+  // still read-only on org membership.
+  DISPATCHER: new Set<Action>(['members:read', ...LOGISTICS_ACTIONS, ...YELLOW_ZONE_ACTIONS]),
+  VIEWER: new Set<Action>(['members:read', 'ships:read', 'drivers:read', 'yellow-zone:read']),
 };
 
 export function hasPermission(role: Role, action: Action): boolean {

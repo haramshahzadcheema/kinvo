@@ -7,6 +7,7 @@ import {
   VOICE_RECONCILIATION_JOB_SCHEDULER_ID,
   voiceReconciliationQueue,
 } from './core/queue/queues';
+import { emitterRedisClient } from './core/realtime/emitter';
 import { redis } from './core/redis';
 import { createVoiceWorkers } from './modules/voice/voice.workers';
 
@@ -50,6 +51,7 @@ async function main(): Promise<void> {
       .then(() => disconnectPrisma())
       .finally(() => {
         redis.disconnect();
+        emitterRedisClient.disconnect();
         process.exit(0);
       });
   }

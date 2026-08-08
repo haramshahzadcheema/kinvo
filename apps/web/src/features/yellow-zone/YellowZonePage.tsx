@@ -1,0 +1,438 @@
+import type { YellowZoneItemDto, YellowZonePriorityValue, YellowZoneStatusValue } from '@kinvo/contracts';
+import { useState } from 'react';
+import { formatDateTime, formatRelativeTime } from '../../lib/format';
+import { useRealtimeConnection } from '../../lib/useRealtimeConnection';
+import { isApiError } from '../../lib/useAuth';
+import {
+  YELLOW_ZONE_PRIORITY_DOTS,
+  YELLOW_ZONE_PRIORITY_LABEL,
+  YELLOW_ZONE_PRIORITY_STYLE,
+  YELLOW_ZONE_STATUS_LABEL,
+  YELLOW_ZONE_STATUS_STYLE,
+} from './statusStyles';
+import { useYellowZone, useYellowZoneMutations, useYellowZoneStatusCounts } from './useYellowZone';
+
+const STATUS_FILTERS: YellowZoneStatusValue[] = ['PENDING', 'IN_REVIEW', 'RESOLVED', 'DISMISSED'];
+const PRIORITY_FILTERS: YellowZonePriorityValue[] = ['HIGH', 'MEDIUM', 'LOW'];
+const PAGE_SIZE = 20;
+
+// Phase 5's escalation queue — deliberately fed by unresolved OUTBOUND
+// calls (SYSTEM_ERROR AssignmentAttempts), not a literal inbound-call
+// concept CALL-E doesn't support. See docs/ARCHITECTURE.md's Phase 5
+// Decisions log (Option A) for the full reasoning. Realtime-driven: new
+// items and status changes arrive live via RealtimeProvider's socket
+// listener, which invalidates this page's queries — no polling here.
+export function YellowZonePage({ onNavigate }: { onNavigate: (tab: 'assignments') => void }) {
+  const [statusFilter, setStatusFilter] = useState<YellowZoneStatusValue | ''>('PENDING');
+  const [priorityFilter, setPriorityFilter] = useState<YellowZonePriorityValue | ''>('');
+  const [page, setPage] = useState(1);
+  const [selectedItem, setSelectedItem] = useState<YellowZoneItemDto | null>(null);
+  const connectionStatus = useRealtimeConnection();
+
+  const { data: counts, isLoading: countsLoading } = useYellowZoneStatusCounts();
+  const { data, isLoading, isError } = useYellowZone({
+    status: statusFilter || undefined,
+    priority: priorityFilter || undefined,
+    page,
+    pageSize: PAGE_SIZE,
+  });
+
+  function changeStatusFilter(status: YellowZoneStatusValue | '') {
+    setStatusFilter(status);
+    setPage(1);
+  }
+
+  function changePriorityFilter(priority: YellowZonePriorityValue | '') {
+    setPriorityFilter((current) => (current === priority ? '' : priority));
+    setPage(1);
+  }
+
+  const items = data?.items ?? [];
+
+  return (
+    <div className="animate-[tideIn_0.2s_ease]">
+      <div className="mb-5 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-bold text-[#0F2A38]">Yellow Zone</h1>
+          <p className="mt-0.5 text-xs text-[#8B9AA3]">
+            Automated calls CALL-E couldn't resolve on its own — reviewed and cleared here.
+          </p>
+        </div>
+        {connectionStatus === 'connecting' && (
+          <span className="flex flex-shrink-0 items-center gap-1.5 rounded-full bg-[#F1F1EE] px-2.5 py-1 text-[10.5px] font-semibold text-[#8B9AA3]">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+            Reconnecting…
+          </span>
+        )}
+      </div>
+
+      <div className="mb-3.5 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+        {STATUS_FILTERS.map((status) => (
+          <button
+            key={status}
+            onClick={() => changeStatusFilter(statusFilter === status ? '' : status)}
+            className="rounded-xl border px-3.5 py-2.5 text-left transition"
+            style={{
+              borderColor: statusFilter === status ? YELLOW_ZONE_STATUS_STYLE[status].color : '#ECE1CC',
+              background: statusFilter === status ? YELLOW_ZONE_STATUS_STYLE[status].bg : '#FFFFFF',
+            }}
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+              {YELLOW_ZONE_STATUS_LABEL[status]}
+            </div>
+            {countsLoading ? (
+              <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[#F0EADC]" />
+            ) : (
+              <div
+                className="mt-0.5 text-lg font-bold"
+                style={{ color: YELLOW_ZONE_STATUS_STYLE[status].color }}
+              >
+                {counts?.[status] ?? 0}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+
+      <div className="mb-3.5 flex flex-wrap items-center gap-2">
+        <span className="text-[10.5px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+          Priority
+        </span>
+        {PRIORITY_FILTERS.map((priority) => (
+          <button
+            key={priority}
+            onClick={() => changePriorityFilter(priority)}
+            className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition"
+            style={{
+              borderColor: priorityFilter === priority ? YELLOW_ZONE_PRIORITY_STYLE[priority].color : '#ECE1CC',
+              background: priorityFilter === priority ? YELLOW_ZONE_PRIORITY_STYLE[priority].bg : '#FFFFFF',
+              color: priorityFilter === priority ? YELLOW_ZONE_PRIORITY_STYLE[priority].color : '#5C6B75',
+            }}
+          >
+            <PriorityDots priority={priority} />
+            {YELLOW_ZONE_PRIORITY_LABEL[priority]}
+          </button>
+        ))}
+        {(statusFilter || priorityFilter) && (
+          <button
+            onClick={() => {
+              changeStatusFilter('');
+              setPriorityFilter('');
+            }}
+            className="text-[11px] font-semibold text-[#8B9AA3] hover:text-[#0F2A38]"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
+      {isLoading && <YellowZoneListSkeleton />}
+      {isError && <p className="text-sm text-[#C1503B]">Could not load the Yellow Zone queue.</p>}
+
+      {!isLoading && !isError && items.length === 0 && (
+        <div className="rounded-2xl border border-[#ECE1CC] bg-white py-10 text-center">
+          <div className="mb-1 text-[15px] font-semibold text-[#0F2A38]">
+            {statusFilter === 'PENDING' || statusFilter === ''
+              ? 'Good — nothing needs your attention.'
+              : `No ${YELLOW_ZONE_STATUS_LABEL[statusFilter || 'PENDING'].toLowerCase()} items`}
+          </div>
+          <p className="text-xs text-[#8B9AA3]">
+            Every automated call CALL-E couldn't resolve on its own will show up here.
+          </p>
+        </div>
+      )}
+
+      {!isLoading && items.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {items.map((item) => (
+            <YellowZoneRow key={item.id} item={item} onOpen={() => setSelectedItem(item)} />
+          ))}
+        </div>
+      )}
+
+      {data && data.totalPages > 1 && (
+        <div className="mt-3.5 flex items-center justify-between text-[11.5px] text-[#5C6B75]">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            className="rounded-lg border border-[#ECE1CC] px-3 py-1.5 font-semibold hover:bg-[#F3EDDD] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Previous
+          </button>
+          <span>
+            Page {data.page} of {data.totalPages} · {data.total} total
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
+            disabled={page >= data.totalPages}
+            className="rounded-lg border border-[#ECE1CC] px-3 py-1.5 font-semibold hover:bg-[#F3EDDD] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      )}
+
+      {selectedItem && (
+        <YellowZoneDetailModal
+          item={selectedItem}
+          onClose={() => setSelectedItem(null)}
+          onClaimed={setSelectedItem}
+          onViewAssignment={() => {
+            setSelectedItem(null);
+            onNavigate('assignments');
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function PriorityDots({ priority }: { priority: YellowZonePriorityValue }) {
+  const filled = YELLOW_ZONE_PRIORITY_DOTS[priority];
+  return (
+    <span className="flex items-center gap-0.5" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="h-1.5 w-1.5 rounded-full"
+          style={{ background: i < filled ? 'currentColor' : '#E2DBC9' }}
+        />
+      ))}
+    </span>
+  );
+}
+
+function YellowZoneRow({ item, onOpen }: { item: YellowZoneItemDto; onOpen: () => void }) {
+  const statusStyle = YELLOW_ZONE_STATUS_STYLE[item.status];
+  const priorityStyle = YELLOW_ZONE_PRIORITY_STYLE[item.priority];
+  return (
+    <div
+      onClick={onOpen}
+      className="cursor-pointer rounded-lg border border-[#ECE1CC] bg-white px-3.5 py-3 transition hover:bg-[#FBF6EE]"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <span className="text-[12.5px] font-semibold text-[#0F2A38]">{item.driverName}</span>
+          <span className="ml-1.5 text-[11px] text-[#8B9AA3]">
+            {item.shipName} · {item.destination}
+          </span>
+        </div>
+        <div className="flex flex-shrink-0 items-center gap-1.5">
+          <span
+            className="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+            style={{ background: priorityStyle.bg, color: priorityStyle.color }}
+          >
+            <PriorityDots priority={item.priority} />
+            {item.priority}
+          </span>
+          <span
+            className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+            style={{ background: statusStyle.bg, color: statusStyle.color }}
+          >
+            {YELLOW_ZONE_STATUS_LABEL[item.status]}
+          </span>
+        </div>
+      </div>
+      <p className="mt-1.5 truncate text-[11.5px] text-[#5C6B75]">{item.reason}</p>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#8B9AA3]">
+        <span>{item.assignedToUserName ? `Claimed by ${item.assignedToUserName}` : 'Unclaimed'}</span>
+        <span className="flex-shrink-0">{formatRelativeTime(item.createdAt)}</span>
+      </div>
+    </div>
+  );
+}
+
+function YellowZoneListSkeleton() {
+  return (
+    <div className="flex flex-col gap-2">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="animate-pulse rounded-lg border border-[#ECE1CC] p-3">
+          <div className="h-3 w-1/3 rounded bg-[#F0EADC]" />
+          <div className="mt-2 h-2.5 w-1/2 rounded bg-[#F5F0E6]" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type ActionMode = 'none' | 'resolve' | 'dismiss';
+
+function YellowZoneDetailModal({
+  item,
+  onClose,
+  onClaimed,
+  onViewAssignment,
+}: {
+  item: YellowZoneItemDto;
+  onClose: () => void;
+  onClaimed: (item: YellowZoneItemDto) => void;
+  onViewAssignment: () => void;
+}) {
+  const mutations = useYellowZoneMutations();
+  const [actionMode, setActionMode] = useState<ActionMode>('none');
+  const [notes, setNotes] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const statusStyle = YELLOW_ZONE_STATUS_STYLE[item.status];
+  const priorityStyle = YELLOW_ZONE_PRIORITY_STYLE[item.priority];
+  const isMutating = mutations.claim.isPending || mutations.resolve.isPending || mutations.dismiss.isPending;
+
+  // claim() intentionally keeps the modal open (so a dispatcher can move
+  // straight into resolve/dismiss) — unlike resolve/dismiss's onClose(),
+  // it must hand the mutation's own response back to the parent so
+  // `item` (a snapshot passed down at open-time, not a live query result)
+  // reflects the new status/owner instead of silently going stale.
+  async function handleClaim() {
+    setError(null);
+    try {
+      const updated = await mutations.claim.mutateAsync(item.id);
+      onClaimed(updated);
+    } catch (err) {
+      setError(isApiError(err) ? err.message : 'Could not claim this item.');
+    }
+  }
+
+  async function handleResolve() {
+    setError(null);
+    try {
+      await mutations.resolve.mutateAsync({ id: item.id, input: { resolutionNotes: notes } });
+      onClose();
+    } catch (err) {
+      setError(isApiError(err) ? err.message : 'Could not resolve this item.');
+    }
+  }
+
+  async function handleDismiss() {
+    setError(null);
+    try {
+      await mutations.dismiss.mutateAsync({
+        id: item.id,
+        input: notes.trim() ? { resolutionNotes: notes } : {},
+      });
+      onClose();
+    } catch (err) {
+      setError(isApiError(err) ? err.message : 'Could not dismiss this item.');
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+      <div onClick={onClose} className="absolute inset-0 bg-[rgba(15,42,56,0.4)]" />
+      <div className="relative w-full max-w-md animate-[tideIn_0.15s_ease] rounded-2xl border border-[#ECE1CC] bg-white p-5 shadow-xl">
+        <div className="mb-3.5 flex items-start justify-between gap-2">
+          <div>
+            <h3 className="text-[15px] font-bold text-[#0F2A38]">{item.driverName}</h3>
+            <p className="mt-0.5 text-[11.5px] text-[#8B9AA3]">{item.driverPhone}</p>
+          </div>
+          <div className="flex flex-shrink-0 flex-col items-end gap-1">
+            <span
+              className="rounded-full px-2.5 py-1 text-[10.5px] font-semibold"
+              style={{ background: statusStyle.bg, color: statusStyle.color }}
+            >
+              {YELLOW_ZONE_STATUS_LABEL[item.status]}
+            </span>
+            <span
+              className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10.5px] font-semibold"
+              style={{ background: priorityStyle.bg, color: priorityStyle.color }}
+            >
+              <PriorityDots priority={item.priority} />
+              {YELLOW_ZONE_PRIORITY_LABEL[item.priority]}
+            </span>
+          </div>
+        </div>
+
+        <dl className="flex flex-col gap-2 text-[12.5px]">
+          <DetailRow label="Ship / destination" value={`${item.shipName} · ${item.destination}`} />
+          <DetailRow label="Truck type" value={item.truckType} />
+          <DetailRow label="Why it was escalated" value={item.reason} />
+          <DetailRow label="Escalated" value={formatDateTime(item.createdAt) ?? '—'} />
+          <DetailRow label="Owner" value={item.assignedToUserName ?? 'Unclaimed'} />
+          {item.resolutionNotes && <DetailRow label="Resolution notes" value={item.resolutionNotes} />}
+        </dl>
+
+        {error && <p className="mt-3 text-[11.5px] text-[#C1503B]">{error}</p>}
+
+        {actionMode !== 'none' && (item.status === 'PENDING' || item.status === 'IN_REVIEW') && (
+          <div className="mt-3 rounded-lg bg-[#FBF6EE] p-2.5">
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder={
+                actionMode === 'resolve' ? 'What did you do? (required)' : 'Reason (optional)'
+              }
+              rows={2}
+              className="w-full resize-none rounded-lg border border-[#ECE1CC] px-2 py-1.5 text-[11.5px] outline-none"
+            />
+            <div className="mt-1.5 flex justify-end gap-1.5">
+              <button
+                onClick={() => {
+                  setActionMode('none');
+                  setNotes('');
+                }}
+                className="text-[10.5px] font-semibold text-[#8B9AA3]"
+              >
+                Back
+              </button>
+              <button
+                onClick={actionMode === 'resolve' ? handleResolve : handleDismiss}
+                disabled={isMutating || (actionMode === 'resolve' && !notes.trim())}
+                className="rounded-full bg-[#1E7A8C] px-2.5 py-1 text-[10.5px] font-semibold text-white disabled:opacity-50"
+              >
+                {actionMode === 'resolve' ? 'Confirm resolve' : 'Confirm dismiss'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4.5 flex flex-wrap gap-2">
+          {item.status === 'PENDING' && (
+            <button
+              onClick={handleClaim}
+              disabled={isMutating}
+              className="flex-1 rounded-lg bg-[#1E7A8C] py-2 text-[12.5px] font-semibold text-white hover:bg-[#175F6E] disabled:opacity-50"
+            >
+              Claim
+            </button>
+          )}
+          {item.status === 'IN_REVIEW' && actionMode === 'none' && (
+            <button
+              onClick={() => setActionMode('resolve')}
+              className="flex-1 rounded-lg bg-[#1E7A8C] py-2 text-[12.5px] font-semibold text-white hover:bg-[#175F6E]"
+            >
+              Resolve
+            </button>
+          )}
+          {(item.status === 'PENDING' || item.status === 'IN_REVIEW') && actionMode === 'none' && (
+            <button
+              onClick={() => setActionMode('dismiss')}
+              className="flex-1 rounded-lg border border-[#ECE1CC] py-2 text-[12.5px] font-semibold text-[#5C6B75] hover:bg-[#F3EDDD]"
+            >
+              Dismiss
+            </button>
+          )}
+          <button
+            onClick={onViewAssignment}
+            className="flex-1 rounded-lg border border-[#ECE1CC] py-2 text-[12.5px] font-semibold text-[#5C6B75] hover:bg-[#F3EDDD]"
+          >
+            View in Assignments
+          </button>
+        </div>
+        <button
+          onClick={onClose}
+          className="mt-2 w-full rounded-lg py-1.5 text-[11.5px] font-semibold text-[#8B9AA3] hover:text-[#0F2A38]"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-[#F5EEE0] pb-2">
+      <dt className="flex-shrink-0 text-[#8B9AA3]">{label}</dt>
+      <dd className="text-right text-[#0F2A38]">{value}</dd>
+    </div>
+  );
+}

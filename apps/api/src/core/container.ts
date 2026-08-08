@@ -12,8 +12,13 @@ import {
 } from '../modules/organizations/organizations.service';
 import { createShipsService, type ShipsService } from '../modules/ships/ships.service';
 import { createVoiceService, type VoiceService } from '../modules/voice/voice.service';
+import {
+  createYellowZoneService,
+  type YellowZoneService,
+} from '../modules/yellow-zone/yellow-zone.service';
 import { createAuditLogger, type AuditLogger } from './audit/audit-logger';
 import { logger } from './logger';
+import { createRealtimeEmitter, type EmitToOrganization } from './realtime/emitter';
 import { checkDatabaseConnection, prisma } from './prisma';
 import { checkRedisConnection, redis } from './redis';
 import { hashPassword, verifyPassword } from './security/password';
@@ -54,6 +59,8 @@ export interface Container {
   tokenRevocationStore: TokenRevocationStore;
   voiceProvider: VoiceProvider;
   voiceService: VoiceService;
+  yellowZoneService: YellowZoneService;
+  emitToOrganization: EmitToOrganization;
 }
 
 export function createContainer(): Container {
@@ -101,7 +108,22 @@ export function createContainer(): Container {
       ? createFakeVoiceProvider()
       : createCallEAdapter({ apiKey: requireCalleApiKey(), baseUrl: env.CALLE_BASE_URL });
 
-  const voiceService = createVoiceService({ prisma, voiceProvider, assignmentsService, logger });
+  // Publish-only — see emitter.ts for why this is deliberately independent
+  // of the Socket.io server itself (server.ts constructs that separately,
+  // once it has an http.Server to attach to; this container is built
+  // before that exists, and worker.ts never has one at all).
+  const { emitToOrganization } = createRealtimeEmitter();
+
+  const yellowZoneService = createYellowZoneService({ prisma, auditLogger, emitToOrganization });
+
+  const voiceService = createVoiceService({
+    prisma,
+    voiceProvider,
+    assignmentsService,
+    yellowZoneService,
+    emitToOrganization,
+    logger,
+  });
 
   return {
     healthService,
@@ -114,5 +136,7 @@ export function createContainer(): Container {
     tokenRevocationStore,
     voiceProvider,
     voiceService,
+    yellowZoneService,
+    emitToOrganization,
   };
 }

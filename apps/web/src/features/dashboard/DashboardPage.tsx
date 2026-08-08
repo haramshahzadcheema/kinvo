@@ -4,14 +4,18 @@ import { AVAILABILITY_LABEL, AVAILABILITY_STYLE } from '../drivers/statusStyles'
 import { formatDateTime, formatRelativeTime, isToday } from '../../lib/format';
 import { useShips, useShipStats } from '../ships/useShips';
 import { SHIP_STATUS_LABEL, SHIP_STATUS_STYLE } from '../ships/statusStyles';
+import { YELLOW_ZONE_PRIORITY_STYLE } from '../yellow-zone/statusStyles';
+import { useYellowZone, useYellowZoneStatusCounts } from '../yellow-zone/useYellowZone';
 
 export function DashboardPage({
   onNavigate,
 }: {
-  onNavigate: (tab: 'ships' | 'drivers', autoOpenCreate?: boolean) => void;
+  onNavigate: (tab: 'ships' | 'drivers' | 'yellow-zone', autoOpenCreate?: boolean) => void;
 }) {
   const { counts: shipStats, isLoading: shipStatsLoading } = useShipStats();
   const { counts: driverStats, isLoading: driverStatsLoading } = useDriverStats();
+  const { data: yellowZoneStats } = useYellowZoneStatusCounts();
+  const { data: pendingYellowZone } = useYellowZone({ status: 'PENDING', pageSize: 4 });
 
   // Reuses the existing list endpoints — no dedicated dashboard/aggregate
   // route, same reasoning as useShipStats/useDriverStats.
@@ -111,6 +115,47 @@ export function DashboardPage({
               </div>
             ))}
           </div>
+        </Panel>
+
+        <Panel title="Yellow Zone">
+          {(yellowZoneStats?.PENDING ?? 0) === 0 ? (
+            <p className="text-xs text-[#8B9AA3]">Good — nothing needs your attention.</p>
+          ) : (
+            <>
+              <div
+                onClick={() => onNavigate('yellow-zone')}
+                className="mb-2 cursor-pointer text-[11px] font-semibold text-[#C1503B] hover:underline"
+              >
+                {yellowZoneStats?.PENDING} automated{' '}
+                {yellowZoneStats?.PENDING === 1 ? 'call needs' : 'calls need'} review →
+              </div>
+              <div className="flex flex-col gap-2">
+                {pendingYellowZone?.items.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => onNavigate('yellow-zone')}
+                    className="cursor-pointer rounded-lg border border-[#F5EEE0] px-3 py-2 transition hover:bg-[#FBF6EE]"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-[12.5px] font-semibold text-[#0F2A38]">
+                        {item.driverName} · {item.shipName}
+                      </span>
+                      <span
+                        className="flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                        style={{
+                          background: YELLOW_ZONE_PRIORITY_STYLE[item.priority].bg,
+                          color: YELLOW_ZONE_PRIORITY_STYLE[item.priority].color,
+                        }}
+                      >
+                        {item.priority}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 truncate text-[11px] text-[#8B9AA3]">{item.reason}</div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </Panel>
 
         <Panel title="Today's operations">

@@ -1,13 +1,16 @@
 import type {
   ActiveVoiceCallDto,
   ActiveVoiceCallsResponse,
+  AssignmentAttemptDto,
   ResolvedVoiceCallDto,
   VoiceCallListQuery,
   VoiceCallListResponse,
 } from '@kinvo/contracts';
+import { YELLOW_ZONE_CREATED } from '@kinvo/contracts';
 import { Prisma } from '@prisma/client';
 import type { Logger } from 'pino';
 import type { AssignmentsService, AttemptActor } from '../assignments/assignments.service';
+import type { YellowZoneService } from '../yellow-zone/yellow-zone.service';
 import { env } from '../../config/env';
 import { ConflictError, NotFoundError } from '../../core/errors/AppError';
 import type {
@@ -17,6 +20,7 @@ import type {
 import { placeVoiceCallJobId, voiceCallsQueue } from '../../core/queue/queues';
 import type { prisma as prismaClient } from '../../core/prisma';
 import { withoutTenantScope } from '../../core/prisma';
+import type { EmitToOrganization } from '../../core/realtime/emitter';
 import { getRequestContext, runWithRequestContext, type RequestContext } from '../../core/request-context';
 import type { VoiceCallOutcome, VoiceProvider } from '../../core/voice/VoiceProvider';
 
@@ -24,6 +28,8 @@ export interface VoiceServiceDependencies {
   prisma: typeof prismaClient;
   voiceProvider: VoiceProvider;
   assignmentsService: AssignmentsService;
+  yellowZoneService: YellowZoneService;
+  emitToOrganization: EmitToOrganization;
   logger: Logger;
 }
 
@@ -173,6 +179,8 @@ export function createVoiceService({
   prisma,
   voiceProvider,
   assignmentsService,
+  yellowZoneService,
+  emitToOrganization,
   logger,
 }: VoiceServiceDependencies): VoiceService {
   // The only fields ever read off this context on the system-actor path are
@@ -214,6 +222,54 @@ export function createVoiceService({
     );
   }
 
+  // Phase 5: a SYSTEM_ERROR attempt IS the escalation trigger — "an
+  // automated call CALL-E can't resolve" (see docs/ARCHITECTURE.md's Phase
+  // 5 Decisions log, Option A). The AssignmentAttempt write and the
+  // YellowZoneItem it produces commit atomically, in one transaction
+  // passed through to both `logAttempt` and
+  // `yellowZoneService.createEscalationForAttempt` — a crash between "the
+  // attempt was recorded" and "the escalation exists" must not be a
+  // reachable state, so this is not two separate writes with a gap between
+  // them the way VoiceWebhookEvent deliberately is (see that model's own
+  // comment for why that one *is* allowed to be non-atomic).
+  async function logSystemErrorWithEscalation(
+    assignmentId: string,
+    notes: string,
+    actor: AttemptActor,
+    provenance: { provider: string },
+  ): Promise<AssignmentAttemptDto> {
+    const context = getRequestContext();
+    let escalation: Awaited<ReturnType<YellowZoneService['createEscalationForAttempt']>> = null;
+
+    const attempt = await prisma.$transaction(async (tx) => {
+      const created = await assignmentsService.logAttempt(
+        assignmentId,
+        { outcome: 'SYSTEM_ERROR', notes },
+        actor,
+        tx,
+      );
+      escalation = await yellowZoneService.createEscalationForAttempt(tx, {
+        organizationId: context.organizationId,
+        assignmentAttemptId: created.id,
+        reason: notes,
+        provider: provenance.provider,
+      });
+      return created;
+    });
+
+    // Emitted only after the transaction has actually committed — sockets
+    // are a cache-invalidation signal, never something a client should
+    // trust ahead of the database write it describes. `null` means this
+    // was a duplicate delivery for an attempt that was already escalated
+    // (see createEscalationForAttempt's own idempotency guard) — nothing
+    // new happened, so nothing to announce.
+    if (escalation) {
+      emitToOrganization(context.organizationId, YELLOW_ZONE_CREATED, { item: escalation });
+    }
+
+    return attempt;
+  }
+
   // Kinvo's own 5-outcome vocabulary -> the existing AttemptOutcome enum.
   // `ambiguous` has no dedicated enum value (see
   // packages/contracts/src/assignment.schema.ts) — a driver response CALL-E
@@ -250,11 +306,7 @@ export function createVoiceService({
           return;
         case 'ambiguous':
         case 'system_error':
-          await assignmentsService.logAttempt(
-            assignmentId,
-            { outcome: 'SYSTEM_ERROR', notes: outcome.reason },
-            actor,
-          );
+          await logSystemErrorWithEscalation(assignmentId, outcome.reason, actor, provenance);
           return;
       }
     } catch (error) {

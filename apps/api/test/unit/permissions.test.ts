@@ -34,4 +34,17 @@ describe('rbac permissions', () => {
     expect(hasPermission('VIEWER', 'drivers:read')).toBe(true);
     expect(hasPermission('VIEWER', 'drivers:manage')).toBe(false);
   });
+
+  it.each(['OWNER', 'ADMIN', 'DISPATCHER'] as const)(
+    '%s can read and manage the Yellow Zone',
+    (role) => {
+      expect(hasPermission(role, 'yellow-zone:read')).toBe(true);
+      expect(hasPermission(role, 'yellow-zone:manage')).toBe(true);
+    },
+  );
+
+  it('VIEWER can read the Yellow Zone but cannot claim/resolve/dismiss', () => {
+    expect(hasPermission('VIEWER', 'yellow-zone:read')).toBe(true);
+    expect(hasPermission('VIEWER', 'yellow-zone:manage')).toBe(false);
+  });
 });

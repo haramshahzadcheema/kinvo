@@ -901,11 +901,16 @@ model, webhook intake + idempotent processing. _Ends with_: creating a ship
 and clicking "recruit" places real automated calls, and assignment statuses
 update live from call outcomes.
 
-**Phase 5 — Inbound Calls & Yellow Zone**
-Inbound webhook handling, escalation classification, `YellowZoneItem`,
-Socket.io real-time push, Yellow Zone review UI. _Ends with_: an inbound call
-CALL-E can't resolve shows up live in the manager's Yellow Zone queue and can
-be resolved from the UI.
+**Phase 5 — Yellow Zone escalation queue** (implemented; re-scoped from
+"Inbound Calls" — see the Phase 5 entry below in the Decisions log for why)
+`YellowZoneItem` model + state machine (`PENDING → IN_REVIEW →
+RESOLVED`/`DISMISSED`), escalation classification, transactional escalation
+integrated into Phase 4's existing `SYSTEM_ERROR` outcome path, Socket.io
+real-time push (publish/subscribe split across the API and worker
+processes, Redis-backed), Yellow Zone review UI, dashboard integration.
+_Ends with_: an unresolved outbound CALL-E call becomes a secure,
+tenant-isolated Yellow Zone item, appears live in the dispatcher's queue
+without a page refresh, and can be claimed and resolved safely from the UI.
 
 **Phase 6 — Reminder Campaigns & Notifications**
 `ReminderCampaign`, approval gate, `campaigns` queue, cancellation →
@@ -2383,3 +2388,183 @@ BullMQ/ioredis's own reconnect behavior and wasn't re-proven with a live
 container kill in this pass (general infra chaos testing was done in
 Phase 1). Final state: 216/216 tests, clean typecheck/lint/build across all
 three workspaces, working tree clean.
+
+## Phase 5: Yellow Zone escalation queue + realtime
+
+**The product decision this phase pivots on.** The original brief called
+this "Inbound Calls & Yellow Zone." A planning pass against the actually-
+installed `@call-e/calle@0.6.0` SDK's own generated OpenAPI types found
+`WebhookEventType` is a closed enum — `call.completed | call.failed |
+call.result_validation_failed` — with no inbound-call concept anywhere in
+the schema, and `CalleCalls` (the SDK's only call-related class) exposes
+only `create/get/listEvents/waitForResult/createAndWait`, all outbound.
+CALL-E cannot receive a call and hand it to Kinvo; it can only place
+outbound confirmation calls, exactly as Phase 4 already uses it. Presented
+as a blocking decision with three options; the user chose **Option A**:
+re-scope Yellow Zone to be fed by unresolved *outbound* calls — the
+`SYSTEM_ERROR` `AssignmentAttempt`s Phase 4 already produces when a call
+fails, times out, or CALL-E can't judge the outcome — rather than a literal
+inbound-call feature that has no implementation path against the real
+provider. Nothing about Phase 4's actual call-placement behavior changed;
+only what happens *after* a call ends up `SYSTEM_ERROR` is new.
+
+**Schema and state machine.** `YellowZoneItem` (new model) denormalizes
+`driverId`/`shipId`/`destination`/`truckType` onto the row itself, the same
+way `AssignmentAttempt.provider` already does — a dispatcher's queue needs
+to render without joining back through `Assignment → TruckRequirement →
+Ship` on every list request. `assignmentAttemptId` is unique, which is the
+actual duplicate-escalation guard (defense in depth: `AssignmentAttempt` is
+itself only ever created once per terminal webhook/reconciliation event, so
+the uniqueness is mostly never exercised, but a webhook replay racing a
+reconciliation sweep is exactly the scenario it exists for). Status walks
+`PENDING → IN_REVIEW → RESOLVED` or `PENDING/IN_REVIEW → DISMISSED`, each
+transition using the codebase's established `updateMany({where: {id,
+status: X}})` + `count === 0 → 409` pattern (`assignments.service.ts`'s
+`confirmAssignment`/`rejectAssignment` precedent) rather than a plain
+`update()` — proven under real concurrency with a `Promise.all` double-claim
+test, exactly one request wins. `YellowZoneItem` was deliberately added to
+`TENANT_SCOPED_MODELS` (unlike `AssignmentAttempt`/`VoiceCallPlacement`,
+deliberately excluded) because a dispatcher's queue is a direct top-level
+list/filter access pattern — the same shape as `Ship`/`Driver` — not a
+sub-resource always reached through an already-owned parent.
+
+**Escalation is transactional with the triggering attempt, not
+best-effort.** `assignments.service.ts`'s `logAttempt` gained an optional
+trailing `tx?: TransactionClient` parameter (mirroring `auditLogger.record`'s
+own shape), so `voice.service.ts`'s new `logSystemErrorWithEscalation`
+wraps both the `SYSTEM_ERROR` `AssignmentAttempt` write and the
+`YellowZoneItem` creation in one `prisma.$transaction`. A dispatcher can
+never see "confirmed" flip to a failure that has no corresponding queue
+entry, or a queue entry for an attempt that didn't actually get persisted.
+`classifyEscalation(reason)` — a pure, total function pattern-matching on
+the real reason strings `outcomeTranslation.ts` already produces — assigns
+`HIGH`/`MEDIUM`/`LOW`, defaulting safely to `MEDIUM` for anything
+unrecognized rather than throwing.
+
+**Realtime: a publish/subscribe split, not a single Socket.io server.**
+`voiceService`/`yellowZoneService` are constructed once by
+`createContainer()`, which runs in three different entrypoints —
+`server.ts` (has an `http.Server`, can host a real Socket.io `Server`),
+`worker.ts` (a pure BullMQ processor, **no** HTTP server, yet this is
+exactly where escalations are created, since reconciliation and webhook
+processing are worker-invoked), and the test harness. A single Socket.io
+`Server` instance can't exist in the worker process at all. Solved by
+splitting the realtime layer in two: `core/realtime/socketServer.ts`
+(subscribe-side, API-process-only, accepts browser connections, wired to
+Redis via `@socket.io/redis-adapter` for multi-instance correctness) and
+`core/realtime/emitter.ts` (publish-side, used by *both* processes via
+`@socket.io/redis-emitter`, which speaks the same Redis pub/sub protocol the
+adapter listens on without needing a Socket.io `Server` instance at all).
+The emitter's Redis connection is a module-level singleton — an earlier
+draft constructed a fresh `ioredis` client per `createContainer()` call,
+which would have opened a new connection on every one of the ~254 test
+setups; caught in design review, not in production.
+
+Socket auth reuses REST auth's exact verification logic —
+`resolveAuthenticatedContext(token, tokenRevocationStore)` was extracted
+into its own module specifically so the Socket.io handshake middleware and
+`authenticate.ts` can never drift on what "authenticated" means. Room
+membership (`org:${organizationId}`) is derived only from this verified
+context; the client's handshake payload is never trusted for it, even if it
+supplies its own `organizationId`. Every Yellow Zone socket event carries
+only enough to key a TanStack Query cache invalidation (`['yellow-zone']`)
+— never data the UI trusts directly. REST + Postgres remain the sole source
+of truth; a client that never received a socket event still sees correct
+data on its next fetch.
+
+**Security audit (live, against the running dev stack, beyond what the
+automated suite already covers).** Registered a second, fully separate
+organization and attempted every verb (`GET` by id, `LIST`, `stats`,
+`claim`, `resolve`, `dismiss`) against another org's real `YellowZoneItem`
+rows — every one returned `404 Yellow Zone item not found` (never `403`,
+matching the existing "invisible, not forbidden" convention from Phase 1's
+own tenant-isolation tests), with no data leakage in any response body.
+Invited and authenticated as a `VIEWER` in the target org: list/stats/get
+all `200`, `claim`/`dismiss` both cleanly `403 Role VIEWER is not permitted
+to perform "yellow-zone:manage"`. Confirmed input validation (empty
+`resolutionNotes` → `400`), invalid state transitions (resolving an
+already-resolved item → `409`), no token → `401`, and a SQL-injection-style
+path segment → a clean `404` via Prisma's parameterization, no stack trace,
+no 500. Socket-level cross-tenant isolation, revoked-membership rejection,
+and the "client-supplied `organizationId` is never trusted" property are
+covered by `test/integration/realtime.test.ts`'s 7 automated tests, which
+this pass re-read rather than re-implemented by hand.
+
+**Live verification — the full pipeline, proven with a real timing-based
+failure, not a seeded row.** `FakeVoiceProvider` (already existing,
+documented as "local development without a real CALL-E account") was
+selected by temporarily running the api/worker processes with `NODE_ENV=
+test` and a shortened `VOICE_RECONCILE_STALE_AFTER_MINUTES=1` /
+`VOICE_RECONCILE_INTERVAL_MINUTES=1` (both reverted immediately after — see
+git history, not left in any committed config). A real assignment's call
+was placed through the real `POST /assignments/:id/voice-calls` endpoint,
+left to sit `pending` (exactly like a real CALL-E call that never gets a
+webhook), and the worker's own reconciliation sweep — running on its normal
+schedule, not invoked directly — converted it to `SYSTEM_ERROR` and created
+the escalation for real. With the Yellow Zone page already open and
+untouched, the "Needs attention" count went `0 → 1` and the row appeared
+with the correct `LOW` priority (matching `classifyEscalation`'s "did not
+reach a terminal state within N minutes" branch) purely from the socket
+push — confirmed by reading `read_network_requests`, which showed the
+`GET /yellow-zone/stats` + `GET /yellow-zone` refetches TanStack Query's
+invalidation triggers, with zero manual interaction. Repeated for a second
+and third escalation to exercise claim → resolve and claim → dismiss
+end-to-end through the actual UI, including the "Confirm resolve" button
+correctly staying disabled until notes are non-empty, and the "Reconnecting…"
+banner genuinely appearing when the API process was killed mid-session and
+clearing again once it came back, socket.io-client's own reconnection
+handling it with no page reload.
+
+**Two real bugs found and fixed during this live pass, both outside what
+the automated suite could catch since it never keeps a component mounted
+across a mutation the way an actual dispatcher session does:**
+
+1. *Yellow Zone detail modal went stale after `claim`.* `YellowZonePage`
+   held the open item as a `useState` snapshot captured at click-open time;
+   claiming (which deliberately keeps the modal open, unlike resolve/
+   dismiss, so a dispatcher can move straight into resolving) invalidated
+   the list query correctly, but the still-open modal never re-read the
+   fresh data — it kept showing "Unclaimed" and a live "Claim" button after
+   a successful claim. Fixed by having the claim mutation's own response
+   (the endpoints already return the updated `YellowZoneItemDto`) flow back
+   into the parent's selection state via a new `onClaimed` callback, rather
+   than relying on the list refetch to somehow reach a detached snapshot.
+2. *`AuthProvider`'s silent-refresh-on-mount raced itself under React 18
+   StrictMode.* Every dev-mode mount runs the effect twice
+   (mount → cleanup → mount); the existing `cancelled` guard only stops the
+   *discarded* invocation's own state update, not its `fetch()` from
+   reaching the server. Since the refresh-token cookie is single-use/
+   rotating, both invocations' concurrent `POST /auth/refresh` calls raced
+   for the same cookie — one redeemed it (`200`), the other got a spurious
+   `401` — and because response ordering doesn't have to match effect
+   ordering, the *live* invocation could be the one that lost, incorrectly
+   signing a genuinely-authenticated user out on a hard reload. Pre-existing
+   since Phase 1, only surfaced now because this phase's live-verification
+   loop reloaded the app far more times in a row than prior phases' manual
+   spot-checks did. Fixed with a module-level in-flight-promise singleton in
+   `auth.tsx` so the second invocation awaits the first real request instead
+   of firing its own; verified with three consecutive hard reloads, each
+   producing exactly one `200` refresh call. (Two separate browser tabs
+   racing the same rotating cookie is a related, lower-priority scenario
+   this fix does not address — it would need cross-tab coordination, e.g. a
+   `BroadcastChannel`-based leader election, and is unrelated to the
+   StrictMode bug actually reported; left as known future work.)
+
+**What Yellow Zone deliberately does not do.** No polling — the list/stats
+queries rely on TanStack Query's normal mount/focus refetch plus the socket
+invalidation, matching the doc comment's own reasoning ("realtime-driven...
+polling would just be redundant traffic on top of a signal that already
+exists"). No RBAC-based UI hiding — action buttons render regardless of
+role and the backend's `403` is the actual enforcement, matching the
+convention already established across every other page in this codebase
+(confirmed by grep before writing the page, not assumed). No inbound-call
+UI of any kind, since the underlying capability doesn't exist against the
+real provider — a future CALL-E account tier or API version that adds true
+inbound support would be a genuinely new integration, not an extension of
+this phase's data model.
+
+**Final state:** 256/256 tests (254 backend + 2 frontend, including 17 new
+Yellow Zone integration tests, 7 new realtime tests, and 12 new
+classification unit tests), clean typecheck/lint/build across all three
+workspaces, Phases 0–4 untouched and still fully green, working tree
+reviewed for unrelated changes before commit.

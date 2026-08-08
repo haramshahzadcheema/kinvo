@@ -69,6 +69,16 @@ export function PhoneIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function AlertIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M10.3 3.9L2.7 17.5A1.5 1.5 0 0 0 4 19.7h16a1.5 1.5 0 0 0 1.3-2.2L13.7 3.9a1.5 1.5 0 0 0-2.6 0z" />
+      <path d="M12 9.5v4" />
+      <path d="M12 16.7h.01" />
+    </Icon>
+  );
+}
+
 export function BellIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Icon {...props}>

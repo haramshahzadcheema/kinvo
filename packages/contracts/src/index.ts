@@ -149,3 +149,33 @@ export type {
   ActiveVoiceCallDto,
   ActiveVoiceCallsResponse,
 } from './voiceCall.schema';
+
+export {
+  yellowZoneStatusSchema,
+  yellowZonePrioritySchema,
+  yellowZoneItemSchema,
+  yellowZoneListQuerySchema,
+  yellowZoneListResponseSchema,
+  yellowZoneStatusCountsSchema,
+  resolveYellowZoneRequestSchema,
+  dismissYellowZoneRequestSchema,
+} from './yellowZone.schema';
+export type {
+  YellowZoneStatusValue,
+  YellowZonePriorityValue,
+  YellowZoneItemDto,
+  YellowZoneListQuery,
+  YellowZoneListResponse,
+  YellowZoneStatusCounts,
+  ResolveYellowZoneRequest,
+  DismissYellowZoneRequest,
+} from './yellowZone.schema';
+
+export {
+  YELLOW_ZONE_CREATED,
+  YELLOW_ZONE_UPDATED,
+  YELLOW_ZONE_RESOLVED,
+  YELLOW_ZONE_DISMISSED,
+  REALTIME_EVENT_NAMES,
+} from './realtime.schema';
+export type { RealtimeEventName, YellowZoneRealtimePayload } from './realtime.schema';

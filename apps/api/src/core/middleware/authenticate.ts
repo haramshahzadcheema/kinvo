@@ -1,8 +1,8 @@
 import type { RequestHandler } from 'express';
 import { ServiceUnavailableError, UnauthorizedError } from '../errors/AppError';
-import { runWithRequestContext, type RequestContext } from '../request-context';
+import { runWithRequestContext } from '../request-context';
+import { resolveAuthenticatedContext } from '../security/resolveAuthenticatedContext';
 import type { TokenRevocationStore } from '../security/token-revocation';
-import { InvalidAccessTokenError, verifyAccessToken } from '../security/tokens';
 
 /**
  * Verifies the bearer access token, resolves the Current Context from its
@@ -27,50 +27,26 @@ export function createAuthenticateMiddleware(
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : undefined;
 
-    if (!token) {
-      next(new UnauthorizedError('Missing access token.'));
-      return;
-    }
-
-    let payload;
+    let context;
     try {
-      payload = verifyAccessToken(token);
+      context = await resolveAuthenticatedContext(token, tokenRevocationStore);
     } catch (error) {
-      if (error instanceof InvalidAccessTokenError) {
-        next(new UnauthorizedError('Invalid or expired access token.'));
+      if (error instanceof UnauthorizedError) {
+        next(error);
         return;
       }
-      next(error);
-      return;
-    }
-
-    try {
-      const isRevoked = await tokenRevocationStore.isTokenRevoked(
-        payload.membershipId,
-        payload.issuedAtMs,
-      );
-      if (isRevoked) {
-        next(new UnauthorizedError('Your access has changed. Please sign in again.'));
-        return;
-      }
-    } catch (error) {
+      // Anything else reaching here is the revocation-check call itself
+      // failing (Redis unreachable), not a bad/missing/revoked token.
       // Fails closed, not open: silently skipping the revocation check
-      // because Redis is unreachable would mean a role change or member
-      // removal stops actually taking effect for up to JWT_ACCESS_TTL —
-      // exactly the staleness window this check exists to close. Mapped to
-      // 503, matching this app's existing convention for a downstream
-      // dependency outage (see errorHandler.ts's
-      // PrismaClientInitializationError branch) rather than an opaque 500.
+      // would mean a role change or member removal stops actually taking
+      // effect for up to JWT_ACCESS_TTL — exactly the staleness window
+      // this check exists to close. Mapped to 503, matching this app's
+      // existing convention for a downstream dependency outage (see
+      // errorHandler.ts's PrismaClientInitializationError branch) rather
+      // than an opaque 500.
       next(new ServiceUnavailableError('Unable to verify access at this time.', { cause: error }));
       return;
     }
-
-    const context: RequestContext = {
-      userId: payload.sub,
-      organizationId: payload.organizationId,
-      membershipId: payload.membershipId,
-      role: payload.role,
-    };
 
     req.context = context;
     runWithRequestContext(context, next);

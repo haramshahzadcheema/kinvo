@@ -47,6 +47,12 @@ const TENANT_SCOPED_MODELS = new Set<Prisma.ModelName>([
   'Ship',
   'Driver',
   'Assignment',
+  // Unlike AssignmentAttempt/VoiceCallPlacement (deliberately NOT
+  // tenant-scoped — every access to those goes through an already-owned
+  // Assignment first), a dispatcher's Yellow Zone queue is a direct
+  // top-level list/filter query, the same access shape as Ship/Driver —
+  // see schema.prisma's YellowZoneItem comment for the full reasoning.
+  'YellowZoneItem',
 ]);
 
 type ScopableArgs = {
