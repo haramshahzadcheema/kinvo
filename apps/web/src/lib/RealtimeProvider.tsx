@@ -17,6 +17,11 @@ const YELLOW_ZONE_EVENTS = [
   'yellow_zone.dismissed',
 ] as const;
 
+// Phase 6: same "invalidate, never trust the payload" principle. Delivered
+// to this user's own socket room (user:${userId}), not the organization
+// room — see socketServer.ts/emitter.ts for the room-targeting change.
+const NOTIFICATION_EVENTS = ['notification.created', 'notification.read'] as const;
+
 /**
  * Owns the one realtime connection for the whole app — mounted once,
  * inside AuthProvider (needs `status`/session lifecycle) and under
@@ -102,12 +107,22 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       socket.on(event, handleYellowZoneEvent);
     }
 
+    const handleNotificationEvent = () => {
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    };
+    for (const event of NOTIFICATION_EVENTS) {
+      socket.on(event, handleNotificationEvent);
+    }
+
     return () => {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('connect_error', handleConnectError);
       for (const event of YELLOW_ZONE_EVENTS) {
         socket.off(event, handleYellowZoneEvent);
+      }
+      for (const event of NOTIFICATION_EVENTS) {
+        socket.off(event, handleNotificationEvent);
       }
     };
   }, [status, queryClient]);

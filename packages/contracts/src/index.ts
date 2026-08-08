@@ -172,10 +172,33 @@ export type {
 } from './yellowZone.schema';
 
 export {
+  notificationTypeSchema,
+  notificationTargetTypeSchema,
+  notificationSchema,
+  notificationListQuerySchema,
+  notificationListResponseSchema,
+  notificationUnreadCountSchema,
+} from './notification.schema';
+export type {
+  NotificationTypeValue,
+  NotificationTargetTypeValue,
+  NotificationDto,
+  NotificationListQuery,
+  NotificationListResponse,
+  NotificationUnreadCount,
+} from './notification.schema';
+
+export {
   YELLOW_ZONE_CREATED,
   YELLOW_ZONE_UPDATED,
   YELLOW_ZONE_RESOLVED,
   YELLOW_ZONE_DISMISSED,
+  NOTIFICATION_CREATED,
+  NOTIFICATION_READ,
   REALTIME_EVENT_NAMES,
 } from './realtime.schema';
-export type { RealtimeEventName, YellowZoneRealtimePayload } from './realtime.schema';
+export type {
+  RealtimeEventName,
+  YellowZoneRealtimePayload,
+  NotificationRealtimePayload,
+} from './realtime.schema';

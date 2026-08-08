@@ -16,6 +16,15 @@ function organizationRoom(organizationId: string): string {
   return `org:${organizationId}`;
 }
 
+// Phase 6: notifications are per-user-private, unlike Yellow Zone's
+// org-wide queue — a socket joins both rooms at connection time, from the
+// same verified token, so a private notification never has to be
+// broadcast into the org room (where every connected teammate would
+// receive it) just because no user-specific room existed yet.
+function userRoom(userId: string): string {
+  return `user:${userId}`;
+}
+
 /**
  * Accepts browser Socket.io connections for the API process only — the
  * *publish* side (`emitToOrganization`) lives in `core/realtime/emitter.ts`
@@ -92,7 +101,9 @@ export function createRealtimeServer(
 
   io.on('connection', (socket) => {
     const organizationId = socket.data.organizationId as string;
+    const userId = socket.data.userId as string;
     void socket.join(organizationRoom(organizationId));
+    void socket.join(userRoom(userId));
   });
 
   return {

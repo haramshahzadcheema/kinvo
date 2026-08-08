@@ -18,6 +18,8 @@ import { AuthScreen } from './features/auth/AuthScreen';
 import { CallsPage } from './features/calls/CallsPage';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { DriversPage } from './features/drivers/DriversPage';
+import { NotificationsPage } from './features/notifications/NotificationsPage';
+import { useUnreadCount } from './features/notifications/useNotifications';
 import { ShipsPage } from './features/ships/ShipsPage';
 import { useYellowZoneStatusCounts } from './features/yellow-zone/useYellowZone';
 import { YellowZonePage } from './features/yellow-zone/YellowZonePage';
@@ -25,10 +27,17 @@ import { AuthProvider } from './lib/auth';
 import { RealtimeProvider } from './lib/RealtimeProvider';
 import { useAuth } from './lib/useAuth';
 
-type Tab = 'dashboard' | 'ships' | 'drivers' | 'assignments' | 'calls' | 'yellow-zone';
+type Tab =
+  | 'dashboard'
+  | 'ships'
+  | 'drivers'
+  | 'assignments'
+  | 'calls'
+  | 'yellow-zone'
+  | 'notifications';
 
 interface NavItem {
-  key: Tab | 'notifications' | 'settings';
+  key: Tab | 'settings';
   label: string;
   icon: (props: { className?: string }) => React.ReactElement;
   comingSoon?: boolean;
@@ -41,7 +50,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'assignments', label: 'Assignments', icon: AssignmentIcon },
   { key: 'calls', label: 'Calls', icon: PhoneIcon },
   { key: 'yellow-zone', label: 'Yellow Zone', icon: AlertIcon },
-  { key: 'notifications', label: 'Notifications', icon: BellIcon, comingSoon: true },
+  { key: 'notifications', label: 'Notifications', icon: BellIcon },
   { key: 'settings', label: 'Settings', icon: SettingsIcon, comingSoon: true },
 ];
 
@@ -87,7 +96,8 @@ function Shell() {
       key === 'drivers' ||
       key === 'assignments' ||
       key === 'calls' ||
-      key === 'yellow-zone'
+      key === 'yellow-zone' ||
+      key === 'notifications'
     ) {
       navigate(key);
     }
@@ -95,6 +105,14 @@ function Shell() {
 
   const { data: yellowZoneCounts } = useYellowZoneStatusCounts();
   const yellowZonePendingCount = yellowZoneCounts?.PENDING ?? 0;
+  const { data: unreadNotifications } = useUnreadCount();
+  const unreadNotificationCount = unreadNotifications?.count ?? 0;
+
+  function navBadgeCount(key: NavItem['key']): number {
+    if (key === 'yellow-zone') return yellowZonePendingCount;
+    if (key === 'notifications') return unreadNotificationCount;
+    return 0;
+  }
 
   return (
     <div className="flex min-h-screen bg-gradient-to-b from-[#FBF6EE] via-[#F6EFE1] to-[#EFE6D2] text-[#1E2A33]">
@@ -136,13 +154,13 @@ function Shell() {
                     Soon
                   </span>
                 )}
-                {item.key === 'yellow-zone' && yellowZonePendingCount > 0 && (
+                {navBadgeCount(item.key) > 0 && (
                   <span
                     className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
                       isActive ? 'bg-white/25 text-white' : 'bg-[#FBE6E1] text-[#C1503B]'
                     }`}
                   >
-                    {yellowZonePendingCount}
+                    {navBadgeCount(item.key)}
                   </span>
                 )}
               </button>
@@ -201,13 +219,13 @@ function Shell() {
                         Soon
                       </span>
                     )}
-                    {item.key === 'yellow-zone' && yellowZonePendingCount > 0 && (
+                    {navBadgeCount(item.key) > 0 && (
                       <span
                         className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
                           isActive ? 'bg-white/25 text-white' : 'bg-[#FBE6E1] text-[#C1503B]'
                         }`}
                       >
-                        {yellowZonePendingCount}
+                        {navBadgeCount(item.key)}
                       </span>
                     )}
                   </button>
@@ -255,6 +273,7 @@ function Shell() {
           {tab === 'assignments' && <AssignmentsPage />}
           {tab === 'calls' && <CallsPage onNavigate={navigate} />}
           {tab === 'yellow-zone' && <YellowZonePage onNavigate={navigate} />}
+          {tab === 'notifications' && <NotificationsPage onNavigate={navigate} />}
         </main>
       </div>
     </div>

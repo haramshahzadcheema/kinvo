@@ -44,6 +44,7 @@ model Organization {
   drivers         Driver[]
   assignments     Assignment[]
   yellowZoneItems YellowZoneItem[]
+  notifications   Notification[]
 
   @@map("organizations")
 }
@@ -65,6 +66,7 @@ model User {
   createdAssignments     Assignment[]        @relation("AssignmentCreatedBy")
   recordedAttempts       AssignmentAttempt[] @relation("AssignmentAttemptRecordedBy")
   claimedYellowZoneItems YellowZoneItem[]    @relation("YellowZoneItemAssignedTo")
+  notifications          Notification[]
 
   @@map("users")
 }
@@ -589,6 +591,80 @@ enum YellowZonePriority {
   LOW
   MEDIUM
   HIGH
+}
+
+// Phase 6: the in-app notification inbox — see docs/ARCHITECTURE.md's
+// Phase 6 Decisions log for the full reasoning behind what's built here
+// (notifications only; ReminderCampaign/approval-gate/campaign-queue are
+// explicitly out of scope for this pass) and why yellow_zone.escalated is
+// currently the only notification-generating event (deliberate — audit
+// events answer "what happened," notifications answer "what does this
+// specific user need to know," and claim/unclaim/resolve/dismiss are
+// already visible live in the Yellow Zone queue itself).
+//
+// User-specific, not organization-wide: matches the exact shape this
+// document's own pre-Phase-5 sketch specified (`Notification { orgId,
+// userId, type, payload, readAt }`, `User 1-N Notification`). Deliberately
+// tenant-scoped via the Prisma extension (TENANT_SCOPED_MODELS) for the
+// same reason YellowZoneItem is — a user's inbox is a direct top-level
+// list/count query, not a sub-resource reached through a parent — but
+// tenant scoping alone is NOT sufficient isolation here: every service
+// method additionally filters by userId explicitly, since the extension
+// only ever injects organizationId, never userId. See
+// notification.service.ts for where that second filter lives.
+//
+// targetType/targetId are a generic pointer (string, not a real FK) —
+// same reasoning as YellowZoneItem.driverId/shipId and
+// AssignmentAttempt.provider: written by exactly one call site per
+// notification type, from already-validated data, never from user input,
+// and a real FK would force every future notification type to point at
+// the same target model, which defeats the point of targetType existing
+// at all.
+model Notification {
+  id             String               @id @default(cuid())
+  organizationId String
+  userId         String
+  type           NotificationType
+  title          String
+  message        String
+  targetType     NotificationTargetType
+  targetId       String
+  readAt         DateTime?
+  createdAt      DateTime             @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // The idempotency key (see notification.service.ts's createForRecipients):
+  // one notification per (recipient, source event) pair, at the database
+  // level, not just application logic — a duplicate webhook/reconciliation
+  // delivery that already produced its one YellowZoneItem (idempotent via
+  // YellowZoneItem.assignmentAttemptId's own uniqueness) would otherwise
+  // still be able to fan out a second round of notifications for the same
+  // escalation if the notification step ran twice. targetId (not a
+  // separately-generated "source event id") IS the natural deterministic
+  // key here — one YellowZoneItem can only ever produce one
+  // yellow_zone.escalated notification per recipient, full stop.
+  @@unique([userId, targetType, targetId, type])
+  // Every list query this table serves is "this user's inbox in this org,
+  // newest first" (the default view) — organizationId leads since the
+  // tenant-scoping extension always injects it first, userId narrows to
+  // one recipient, createdAt orders the result.
+  @@index([organizationId, userId, createdAt])
+  // The unread-count query (readAt IS NULL) is hit on every page load and
+  // every realtime invalidation — frequent enough to justify its own
+  // index rather than relying on the createdAt-ordered one above, which
+  // doesn't help a query that filters on readAt instead of sorting on it.
+  @@index([organizationId, userId, readAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  YELLOW_ZONE_ESCALATED
+}
+
+enum NotificationTargetType {
+  YELLOW_ZONE_ITEM
 }
 
 enum AssignmentStatus {

@@ -244,3 +244,107 @@ describe('realtime — organization room isolation', () => {
     expect(event.item.status).toBe('PENDING');
   });
 });
+
+describe('realtime — user room isolation (Phase 6 notifications)', () => {
+  it('delivers a user-targeted event only to that user\'s socket, never a same-org teammate\'s', async () => {
+    const { app, container } = buildAppWithContainer();
+    const owner = await registerOrganization(app);
+    // A second, genuinely different user in the SAME organization —
+    // notifications are per-user-private, so same-org is exactly the case
+    // that must NOT leak (unlike organization-room isolation, which only
+    // has to prove cross-tenant separation).
+    const invite = await request(app)
+      .post('/api/v1/organizations/invitations')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ email: 'teammate@example.com', role: 'DISPATCHER' });
+    const accept = await request(app)
+      .post('/api/v1/auth/accept-invitation')
+      .send({
+        token: invite.body.inviteToken,
+        firstName: 'Team',
+        lastName: 'Mate',
+        password: 'correct-horse-battery-staple',
+      });
+    const teammateToken = accept.body.accessToken as string;
+    const teammateUserId = accept.body.user.id as string;
+
+    const { url } = await startRealtimeServer(container);
+    const ownerSocket = connectSocket(url, owner.accessToken);
+    const teammateSocket = connectSocket(url, teammateToken);
+    await Promise.all([waitForConnect(ownerSocket), waitForConnect(teammateSocket)]);
+
+    const receivedByTeammate = waitForEvent(teammateSocket, 'notification.created');
+    let receivedByOwner = false;
+    ownerSocket.once('notification.created', () => {
+      receivedByOwner = true;
+    });
+
+    container.emitToUser(teammateUserId, 'notification.created', {
+      notification: { id: 'test-notification' } as never,
+    });
+
+    await receivedByTeammate;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(receivedByOwner).toBe(false);
+  });
+
+  it('delivers a real notification.created event end-to-end when a call escalates', async () => {
+    const { app, container } = buildAppWithContainer();
+    const owner = await registerOrganization(app);
+    const shipResponse = await request(app)
+      .post('/api/v1/ships')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        shipName: 'MSC Aurora',
+        truckRequirements: [{ destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 }],
+      });
+    const truckRequirementId = shipResponse.body.truckRequirements[0].id as string;
+    const driverResponse = await request(app)
+      .post('/api/v1/drivers')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ fullName: 'Ahsan Raza', phone: '+92 300 1234567', truckType: 'Flatbed' });
+    const assignmentResponse = await request(app)
+      .post('/api/v1/assignments')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ truckRequirementId, driverId: driverResponse.body.id });
+    const assignmentId = assignmentResponse.body.id as string;
+
+    const { url } = await startRealtimeServer(container);
+    const socket = connectSocket(url, owner.accessToken);
+    await waitForConnect(socket);
+
+    const eventPromise = waitForEvent<{ notification: { type: string; targetType: string } }>(
+      socket,
+      'notification.created',
+    );
+
+    const context: RequestContext = {
+      userId: 'test:system',
+      organizationId: owner.organizationId,
+      membershipId: 'test:system',
+      role: 'OWNER',
+    };
+    await runWithRequestContext(context, () =>
+      container.voiceService.executeCallPlacement({
+        assignmentId,
+        organizationId: owner.organizationId,
+        callAttemptRef: `${assignmentId}:0`,
+      }),
+    );
+    const placement = await prisma.voiceCallPlacement.findFirstOrThrow({ where: { assignmentId } });
+    const fake = container.voiceProvider as FakeVoiceProvider;
+    fake.setOutcome(placement.externalCallId, {
+      kind: 'system_error',
+      reason: 'CALL-E reported the call as failed.',
+    });
+    await container.voiceService.processWebhookSignal({
+      provider: 'fake',
+      eventId: `evt-${placement.externalCallId}`,
+      externalCallId: placement.externalCallId,
+    });
+
+    const event = await eventPromise;
+    expect(event.notification.type).toBe('YELLOW_ZONE_ESCALATED');
+    expect(event.notification.targetType).toBe('YELLOW_ZONE_ITEM');
+  });
+});

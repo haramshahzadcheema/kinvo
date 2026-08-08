@@ -7,6 +7,10 @@ import { createAuthService, type AuthService } from '../modules/auth/auth.servic
 import { createDriversService, type DriversService } from '../modules/drivers/drivers.service';
 import { createHealthService, type HealthService } from '../modules/health/health.service';
 import {
+  createNotificationService,
+  type NotificationService,
+} from '../modules/notifications/notification.service';
+import {
   createOrganizationsService,
   type OrganizationsService,
 } from '../modules/organizations/organizations.service';
@@ -18,7 +22,7 @@ import {
 } from '../modules/yellow-zone/yellow-zone.service';
 import { createAuditLogger, type AuditLogger } from './audit/audit-logger';
 import { logger } from './logger';
-import { createRealtimeEmitter, type EmitToOrganization } from './realtime/emitter';
+import { createRealtimeEmitter, type EmitToOrganization, type EmitToUser } from './realtime/emitter';
 import { checkDatabaseConnection, prisma } from './prisma';
 import { checkRedisConnection, redis } from './redis';
 import { hashPassword, verifyPassword } from './security/password';
@@ -60,7 +64,9 @@ export interface Container {
   voiceProvider: VoiceProvider;
   voiceService: VoiceService;
   yellowZoneService: YellowZoneService;
+  notificationService: NotificationService;
   emitToOrganization: EmitToOrganization;
+  emitToUser: EmitToUser;
 }
 
 export function createContainer(): Container {
@@ -112,16 +118,19 @@ export function createContainer(): Container {
   // of the Socket.io server itself (server.ts constructs that separately,
   // once it has an http.Server to attach to; this container is built
   // before that exists, and worker.ts never has one at all).
-  const { emitToOrganization } = createRealtimeEmitter();
+  const { emitToOrganization, emitToUser } = createRealtimeEmitter();
 
   const yellowZoneService = createYellowZoneService({ prisma, auditLogger, emitToOrganization });
+  const notificationService = createNotificationService({ prisma, emitToUser });
 
   const voiceService = createVoiceService({
     prisma,
     voiceProvider,
     assignmentsService,
     yellowZoneService,
+    notificationService,
     emitToOrganization,
+    emitToUser,
     logger,
   });
 
@@ -137,6 +146,8 @@ export function createContainer(): Container {
     voiceProvider,
     voiceService,
     yellowZoneService,
+    notificationService,
     emitToOrganization,
+    emitToUser,
   };
 }

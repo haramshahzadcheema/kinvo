@@ -6,10 +6,11 @@ import type {
   VoiceCallListQuery,
   VoiceCallListResponse,
 } from '@kinvo/contracts';
-import { YELLOW_ZONE_CREATED } from '@kinvo/contracts';
+import { NOTIFICATION_CREATED, YELLOW_ZONE_CREATED } from '@kinvo/contracts';
 import { Prisma } from '@prisma/client';
 import type { Logger } from 'pino';
 import type { AssignmentsService, AttemptActor } from '../assignments/assignments.service';
+import type { NotificationService } from '../notifications/notification.service';
 import type { YellowZoneService } from '../yellow-zone/yellow-zone.service';
 import { env } from '../../config/env';
 import { ConflictError, NotFoundError } from '../../core/errors/AppError';
@@ -20,7 +21,7 @@ import type {
 import { placeVoiceCallJobId, voiceCallsQueue } from '../../core/queue/queues';
 import type { prisma as prismaClient } from '../../core/prisma';
 import { withoutTenantScope } from '../../core/prisma';
-import type { EmitToOrganization } from '../../core/realtime/emitter';
+import type { EmitToOrganization, EmitToUser } from '../../core/realtime/emitter';
 import { getRequestContext, runWithRequestContext, type RequestContext } from '../../core/request-context';
 import type { VoiceCallOutcome, VoiceProvider } from '../../core/voice/VoiceProvider';
 
@@ -29,9 +30,21 @@ export interface VoiceServiceDependencies {
   voiceProvider: VoiceProvider;
   assignmentsService: AssignmentsService;
   yellowZoneService: YellowZoneService;
+  notificationService: NotificationService;
   emitToOrganization: EmitToOrganization;
+  emitToUser: EmitToUser;
   logger: Logger;
 }
+
+// Phase 6: who gets notified about a new Yellow Zone escalation — everyone
+// who can actually act on it (yellow-zone:manage — see
+// core/rbac/permissions.ts). Deliberately excludes VIEWER: an escalation
+// notification without an action the recipient can take is exactly the
+// "notify everyone by default" anti-pattern docs/ARCHITECTURE.md's Phase 6
+// Decisions log argues against. If VIEWER ever needs its own read-only
+// digest, that's a second, separately-targeted notification type, not a
+// wider recipient list on this one.
+const YELLOW_ZONE_ESCALATION_RECIPIENT_ROLES = ['OWNER', 'ADMIN', 'DISPATCHER'] as const;
 
 export interface VoiceService {
   /** HTTP-triggered: validates the assignment and enqueues a placement job. Runs inside the caller's own request context. */
@@ -180,7 +193,9 @@ export function createVoiceService({
   voiceProvider,
   assignmentsService,
   yellowZoneService,
+  notificationService,
   emitToOrganization,
+  emitToUser,
   logger,
 }: VoiceServiceDependencies): VoiceService {
   // The only fields ever read off this context on the system-actor path are
@@ -240,6 +255,7 @@ export function createVoiceService({
   ): Promise<AssignmentAttemptDto> {
     const context = getRequestContext();
     let escalation: Awaited<ReturnType<YellowZoneService['createEscalationForAttempt']>> = null;
+    let notifications: Awaited<ReturnType<NotificationService['createForRecipients']>> = [];
 
     const attempt = await prisma.$transaction(async (tx) => {
       const created = await assignmentsService.logAttempt(
@@ -254,6 +270,33 @@ export function createVoiceService({
         reason: notes,
         provider: provenance.provider,
       });
+
+      // Phase 6: the notification fan-out commits in the SAME transaction
+      // as the escalation it's about — see docs/ARCHITECTURE.md's Phase 6
+      // Decisions log for why ("a notification must never tell a user
+      // something happened when the authoritative mutation ultimately
+      // rolled back"). `escalation` is null on a duplicate delivery (see
+      // createEscalationForAttempt's own idempotency guard) — nothing new
+      // happened, so nothing to notify anyone about either.
+      if (escalation) {
+        const recipients = await tx.membership.findMany({
+          where: { role: { in: [...YELLOW_ZONE_ESCALATION_RECIPIENT_ROLES] }, status: 'ACTIVE' },
+          select: { userId: true },
+        });
+        notifications = await notificationService.createForRecipients(
+          tx,
+          recipients.map((m) => m.userId),
+          {
+            organizationId: context.organizationId,
+            type: 'YELLOW_ZONE_ESCALATED',
+            title: `New escalation: ${escalation.driverName}`,
+            message: `${escalation.shipName} · ${escalation.destination} — ${escalation.reason}`,
+            targetType: 'YELLOW_ZONE_ITEM',
+            targetId: escalation.id,
+          },
+        );
+      }
+
       return created;
     });
 
@@ -265,6 +308,9 @@ export function createVoiceService({
     // new happened, so nothing to announce.
     if (escalation) {
       emitToOrganization(context.organizationId, YELLOW_ZONE_CREATED, { item: escalation });
+      for (const { userId, notification } of notifications) {
+        emitToUser(userId, NOTIFICATION_CREATED, { notification });
+      }
     }
 
     return attempt;

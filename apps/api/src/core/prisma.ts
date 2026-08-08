@@ -53,6 +53,15 @@ const TENANT_SCOPED_MODELS = new Set<Prisma.ModelName>([
   // top-level list/filter query, the same access shape as Ship/Driver —
   // see schema.prisma's YellowZoneItem comment for the full reasoning.
   'YellowZoneItem',
+  // Phase 6: same reasoning as YellowZoneItem — a user's notification
+  // inbox is a direct top-level list/count query. Tenant scoping alone
+  // is NOT sufficient isolation for this model, though: this extension
+  // only ever injects organizationId, never userId, so
+  // notification.service.ts additionally filters every query by
+  // `userId: context.userId` explicitly — organization-scoping stops a
+  // cross-tenant leak, it does not stop one teammate from seeing
+  // another's private notifications within the SAME organization.
+  'Notification',
 ]);
 
 type ScopableArgs = {

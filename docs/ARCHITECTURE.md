@@ -2708,3 +2708,121 @@ itself).
 **Final state:** 261 backend tests + 26 frontend tests, all passing;
 clean typecheck/lint/build across all three workspaces; Phases 0–4 and
 the original Phase 5 implementation unchanged in behavior throughout.
+
+## Phase 6: Notifications / Inbox
+
+An in-app notification/inbox system, reusing 100% of Phase 5's realtime
+infrastructure (same Socket.io server, same Redis adapter, same
+handshake-time JWT auth) rather than standing up any second delivery
+mechanism. Section 11's original sketch above ("start as a plain Node
+EventEmitter... graduate to Redis pub/sub") is now fully stale — Phase 5
+built the Redis-backed layer directly and this phase's `Notification`
+model matches that pre-existing sketch's data shape (`orgId, userId,
+type, payload, readAt`) closely enough that no redesign was needed, just
+an implementation.
+
+**Explicit scope narrowing.** `docs/ARCHITECTURE.md`'s own Milestones
+section bundles `ReminderCampaign` + approval-gate + campaign-queue with
+`Notification` + inbox under one Phase 6 entry. This pass built only the
+notification/inbox slice — the campaign/reminder half is a materially
+different feature (scheduled outbound messaging with an approval
+workflow, not an event-driven inbox) and is explicitly deferred, not
+silently dropped.
+
+**Data model — user-specific, not org-wide.** `Notification` has both
+`organizationId` and `userId`, and is the first model in this codebase
+needing dual-layer scoping: the `TENANT_SCOPED_MODELS` Prisma extension
+(`core/prisma.ts`) auto-injects `organizationId` on every query, but has
+no concept of `userId` — every service method in
+`notification.service.ts` additionally filters `userId: context.userId`
+explicitly, by hand, on top of that. Proven with dedicated tests for
+both layers independently: tenant isolation (list, cross-org mark-read,
+mark-all-read scoping) and user isolation within one organization (a
+second dispatcher in the same org can't see or mark read a colleague's
+notification).
+
+**Idempotency is a database constraint, not application logic.**
+`@@unique([userId, targetType, targetId, type])` — `targetId` (the
+`YellowZoneItem.id`) is itself the natural dedup key, since one
+`YellowZoneItem` can only ever produce one `YELLOW_ZONE_ESCALATED`
+notification per recipient. `createForRecipients` catches Prisma's
+P2002 as a safe no-op per recipient rather than pre-checking existence,
+mirroring `createEscalationForAttempt`'s own existing idempotency
+pattern one layer up. Proven with a duplicate-webhook-delivery test that
+asserts no duplicate row is created.
+
+**Transactional: notification creation, not just escalation creation.**
+`voice.service.ts`'s `logSystemErrorWithEscalation` creates the
+`AssignmentAttempt`, the `YellowZoneItem` escalation, AND the
+`Notification` rows for every eligible recipient inside the same
+`prisma.$transaction`. Realtime emits (`YELLOW_ZONE_CREATED` to the org
+room, `NOTIFICATION_CREATED` per-recipient to each `user:${userId}`
+room) happen only after that transaction resolves — a socket push can
+never announce a notification that a rolled-back transaction made not
+actually exist.
+
+**Recipient targeting is deliberate, not "notify everyone."** Every
+`ACTIVE` membership with role OWNER, ADMIN, or DISPATCHER gets notified
+on `yellow_zone.escalated`; VIEWER is excluded (no `yellow-zone:manage`
+capability, so a notification would just be noise with no action behind
+it). Membership is evaluated at escalation time, not retroactively — a
+user invited after an escalation fired does not receive it
+retroactively, live-verified by inviting a fresh dispatcher mid-session
+and confirming their inbox started empty despite two prior escalations
+already existing in the same org.
+
+**Audit event vs. notification — a deliberate distinction, not every
+event notifies.** Only `yellow_zone.escalated` produces a notification.
+`claimed`/`unclaimed`/`resolved`/`dismissed` remain audit-only: they're
+already visible live in the Yellow Zone queue itself (Phase 5's realtime
+invalidation), and a notification for each would be noise a dispatcher
+watching that queue doesn't need. No new `AuditEventType` values were
+added for notification creation or read state either — a notification
+is a derived artifact of an already-audited fact (the escalation), and
+per-read audit logging would flood the audit log with "User opened
+notification," which is a UI action, not a business event.
+
+**RBAC is ownership-based, not role-based — a deliberate asymmetry
+from every other Phase 0–5 module.** Notification routes have no
+`authorize()` call and no new RBAC `Action` entries. Every authenticated
+member, including VIEWER, can read and manage their own inbox — the
+boundary is `userId === context.userId` in the service layer, not a
+role check, because "can I see my own notifications" is a materially
+different question from "can I manage this resource." Proven with a
+test asserting every role, VIEWER included, gets 200 (not 403) on its
+own empty inbox.
+
+**Realtime rooms: user-targeted, not org-broadcast.** `socketServer.ts`
+now joins every authenticated connection to both `org:${organizationId}`
+(existing, Phase 5) and a new `user:${userId}` room from the same
+verified-token handshake. `emitter.ts` gained `emitToUser` alongside the
+existing `emitToOrganization`, sharing the same Redis-backed `Emitter`
+singleton — broadcasting a private notification into the org room would
+leak it to every teammate's client, not just the intended recipient.
+Live-verified: two users in the same org, only the targeted one's socket
+receives `notification.created`.
+
+**Frontend: invalidate-on-event, same pattern as Yellow Zone.**
+`RealtimeProvider.tsx` treats `notification.created`/`notification.read`
+exactly like Phase 5's Yellow Zone events — a signal to invalidate the
+`['notifications']` query key and refetch, never a payload the UI trusts
+directly. Clicking a notification marks it read (best-effort — failure
+doesn't block navigation) then navigates to the Yellow Zone tab, not a
+specific item, matching the existing "View in Assignments" button's own
+precedent (no per-item deep-link parameter exists in this router).
+
+**Live verification, not just automated tests.** Against the real
+running stack (`FakeVoiceProvider`, temporarily shortened reconciliation
+window, reverted after): three real escalations delivered live
+notifications with zero manual refresh in an already-open browser tab;
+read state persisted across a hard browser refresh; a second recipient
+(freshly invited mid-session) received an independent notification for
+the same escalation while the first recipient's unread count was
+unaffected by the second's mark-all-read; a brand-new organization
+registered mid-session showed zero notifications despite three
+escalations existing elsewhere; and a full sign-out/sign-in cycle
+correctly recovered the exact prior unread state with no leakage.
+
+**Final state:** 277 backend tests + 36 frontend tests, all passing;
+clean typecheck/lint/build across all three workspaces; Phases 0–5
+unchanged in behavior throughout.

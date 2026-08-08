@@ -14,6 +14,7 @@ import { createAssignmentsRouter } from './modules/assignments/assignments.route
 import { createAuthRouter } from './modules/auth/auth.routes';
 import { createDriversRouter } from './modules/drivers/drivers.routes';
 import { createHealthRouter } from './modules/health/health.routes';
+import { createNotificationRouter } from './modules/notifications/notification.routes';
 import { createOrganizationsRouter } from './modules/organizations/organizations.routes';
 import { createShipsRouter } from './modules/ships/ships.routes';
 import { createVoiceRouters } from './modules/voice/voice.routes';
@@ -75,6 +76,10 @@ export function createApp(container: Container): Express {
   app.use(
     '/api/v1/yellow-zone',
     createYellowZoneRouter(container.yellowZoneService, authenticate),
+  );
+  app.use(
+    '/api/v1/notifications',
+    createNotificationRouter(container.notificationService, authenticate),
   );
 
   app.use(notFoundHandler);
