@@ -45,6 +45,7 @@ function renderProvider(context: AuthContextValue = authedContext) {
   );
   return {
     ...utils,
+    queryClient,
     rerenderWithContext: (next: AuthContextValue) =>
       utils.rerender(
         <QueryClientProvider client={queryClient}>
@@ -135,5 +136,154 @@ describe('RealtimeProvider — reconnect-with-stale-token recovery', () => {
 
     rerenderWithContext({ ...authedContext, status: 'unauthenticated' });
     expect(disconnectSocket).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Phase 6 audit Finding 2: Socket.io does not replay events emitted while
+// disconnected, and the old `handleConnect` did nothing but flip the
+// status pill — a reconnect after any gap (server restart, deploy, a
+// connect_error cycle) left the UI silently stale with no recovery path
+// short of a manual refresh. These tests exercise the actual `connect`
+// handler wired into the real socket instance, not a hand-rolled call to
+// invalidateQueries from the test itself — that would only prove
+// TanStack Query works, not that this file's own wiring calls it.
+describe('RealtimeProvider — reconnect catch-up invalidation (Phase 6 audit Finding 2)', () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+    setAccessToken(null);
+  });
+
+  it('invalidates both realtime-backed query surfaces on the initial connect', async () => {
+    setAccessToken('a-token');
+    const socket = fakeSocket();
+    vi.mocked(connectSocket).mockReturnValue(socket as never);
+
+    const { queryClient } = renderProvider();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    socket.emit('connect');
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['yellow-zone'] }),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['notifications'] });
+  });
+
+  it('invalidates again on a genuine reconnect after a disconnect, not just the first connect', async () => {
+    setAccessToken('a-token');
+    const socket = fakeSocket();
+    vi.mocked(connectSocket).mockReturnValue(socket as never);
+
+    const { queryClient } = renderProvider();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    // Simulates exactly the scenario the audit described: connected, then
+    // a gap (server restart / deploy / transient drop) during which
+    // something could have changed server-side, then socket.io's own
+    // reconnection logic re-establishes the connection and fires `connect`
+    // again — the same event, not a distinct "reconnect" event, which is
+    // exactly why hooking `connect` itself (not just connect_error) is
+    // what closes the gap.
+    socket.emit('connect');
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
+    invalidateSpy.mockClear();
+
+    socket.emit('disconnect');
+    socket.emit('connect');
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['yellow-zone'] }),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['notifications'] });
+  });
+});
+
+// Phase 6 audit Finding 3: prior tests proved query invalidation causes
+// NotificationsPage to update, but nothing proved the socket event itself
+// reaches invalidateQueries through this file's own listener wiring. These
+// simulate the real event on the real socket instance RealtimeProvider
+// subscribes to, the same way the reconnect tests above do — not a direct
+// call to invalidateQueries from the test.
+describe('RealtimeProvider — notification realtime event wiring (Phase 6 audit Finding 3)', () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+    setAccessToken(null);
+  });
+
+  it('invalidates the notifications query when notification.created arrives', async () => {
+    setAccessToken('a-token');
+    const socket = fakeSocket();
+    vi.mocked(connectSocket).mockReturnValue(socket as never);
+
+    const { queryClient } = renderProvider();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    invalidateSpy.mockClear();
+
+    socket.emit('notification.created', { notification: { id: 'n1' } });
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['notifications'] }),
+    );
+  });
+
+  it('invalidates the notifications query when notification.read arrives', async () => {
+    setAccessToken('a-token');
+    const socket = fakeSocket();
+    vi.mocked(connectSocket).mockReturnValue(socket as never);
+
+    const { queryClient } = renderProvider();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    invalidateSpy.mockClear();
+
+    socket.emit('notification.read', {});
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['notifications'] }),
+    );
+  });
+
+  it('does not invalidate the yellow-zone query for a notification-only event', async () => {
+    setAccessToken('a-token');
+    const socket = fakeSocket();
+    vi.mocked(connectSocket).mockReturnValue(socket as never);
+
+    const { queryClient } = renderProvider();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    invalidateSpy.mockClear();
+
+    socket.emit('notification.created', { notification: { id: 'n1' } });
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['notifications'] }),
+    );
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['yellow-zone'] });
+  });
+});
+
+// Yellow Zone's own event wiring had the identical gap (no test simulated
+// a real socket event, only a direct invalidateQueries call from within
+// YellowZonePage's own test) — covered here for the same reason Finding 3
+// covers notifications, using the exact same real-socket-emit pattern.
+describe('RealtimeProvider — yellow zone realtime event wiring', () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+    setAccessToken(null);
+  });
+
+  it('invalidates the yellow-zone query when yellow_zone.created arrives', async () => {
+    setAccessToken('a-token');
+    const socket = fakeSocket();
+    vi.mocked(connectSocket).mockReturnValue(socket as never);
+
+    const { queryClient } = renderProvider();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    invalidateSpy.mockClear();
+
+    socket.emit('yellow_zone.created', { item: { id: 'yz1' } });
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['yellow-zone'] }),
+    );
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['notifications'] });
   });
 });

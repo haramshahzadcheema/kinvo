@@ -464,3 +464,107 @@ describe('notification module — pagination', () => {
     expect(all.body.items).toHaveLength(1);
   });
 });
+
+// Phase 6 audit Finding 1: unreadOnly used z.coerce.boolean(), which
+// coerces via JS truthiness — "false" is a non-empty string, so it parsed
+// to `true` and silently inverted the filter. Each case below pins down
+// the exact required contract (absent -> both; "true" -> unread only;
+// "false" -> both, not "unread only" again; anything else -> a clean 400,
+// not a silent guess) — the "false" and "invalid" cases are the two that
+// fail against the old z.coerce.boolean() implementation.
+describe('notification module — unreadOnly query parameter (Phase 6 audit Finding 1)', () => {
+  async function setUpOneReadOneUnread(
+    app: ReturnType<typeof buildAppWithContainer>['app'],
+    container: ReturnType<typeof buildAppWithContainer>['container'],
+  ) {
+    const { owner, assignmentId } = await setUpPendingAssignment(app);
+    await placeAndResolve(container, owner, assignmentId, {
+      kind: 'system_error',
+      reason: 'First escalation — will be marked read.',
+    });
+    const first = await request(app)
+      .get('/api/v1/notifications')
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    await request(app)
+      .patch(`/api/v1/notifications/${first.body.items[0].id}/read`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    const shipResponse = await request(app)
+      .post('/api/v1/ships')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        shipName: 'Second Ship',
+        truckRequirements: [{ destination: 'Muscat, Oman', truckType: 'Flatbed', quantityNeeded: 1 }],
+      });
+    const truckRequirementId = shipResponse.body.truckRequirements[0].id as string;
+    const driverResponse = await request(app)
+      .post('/api/v1/drivers')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ fullName: 'Second Driver', phone: '+92 300 7654321', truckType: 'Flatbed' });
+    const secondAssignment = await request(app)
+      .post('/api/v1/assignments')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ truckRequirementId, driverId: driverResponse.body.id });
+    await placeAndResolve(container, owner, secondAssignment.body.id, {
+      kind: 'system_error',
+      reason: 'Second escalation — stays unread.',
+    });
+
+    return owner;
+  }
+
+  it('omitted -> returns every notification, read and unread alike', async () => {
+    const { app, container } = buildAppWithContainer();
+    const owner = await setUpOneReadOneUnread(app, container);
+
+    const response = await request(app)
+      .get('/api/v1/notifications')
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(response.status).toBe(200);
+    expect(response.body.items).toHaveLength(2);
+  });
+
+  it('unreadOnly=true -> returns only the unread notification', async () => {
+    const { app, container } = buildAppWithContainer();
+    const owner = await setUpOneReadOneUnread(app, container);
+
+    const response = await request(app)
+      .get('/api/v1/notifications')
+      .query({ unreadOnly: 'true' })
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(response.status).toBe(200);
+    expect(response.body.items).toHaveLength(1);
+    expect(response.body.items[0].readAt).toBeNull();
+  });
+
+  // This is the exact case the audit found broken: z.coerce.boolean()
+  // parsed the string "false" as `true` (non-empty string -> truthy),
+  // so this request used to silently return only the unread item instead
+  // of both.
+  it('unreadOnly=false -> returns every notification, same as omitting it', async () => {
+    const { app, container } = buildAppWithContainer();
+    const owner = await setUpOneReadOneUnread(app, container);
+
+    const response = await request(app)
+      .get('/api/v1/notifications')
+      .query({ unreadOnly: 'false' })
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(response.status).toBe(200);
+    expect(response.body.items).toHaveLength(2);
+  });
+
+  it.each(['0', '1', 'yes', 'no', 'FALSE', 'True', 'random'])(
+    'unreadOnly=%s -> rejected with 400, not silently guessed',
+    async (value) => {
+      const { app, container } = buildAppWithContainer();
+      const owner = await setUpOneReadOneUnread(app, container);
+
+      const response = await request(app)
+        .get('/api/v1/notifications')
+        .query({ unreadOnly: value })
+        .set('Authorization', `Bearer ${owner.accessToken}`);
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    },
+  );
+});

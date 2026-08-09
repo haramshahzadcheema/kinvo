@@ -100,7 +100,10 @@ export function createRealtimeEmitter(): {
   };
 
   const emitToUser: EmitToUser = (userId, event, payload) => {
-    logger.debug({ event, targetId: targetIdFor(payload) }, 'Realtime event emitted to user room.');
+    logger.debug(
+      { userId, event, targetId: targetIdFor(payload) },
+      'Realtime event emitted to user room.',
+    );
     emitter.to(userRoom(userId)).emit(event, payload);
   };
 

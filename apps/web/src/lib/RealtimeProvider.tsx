@@ -53,7 +53,23 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     const socket = connectSocket();
     setConnectionStatus(socket.connected ? 'connected' : 'connecting');
 
-    const handleConnect = () => setConnectionStatus('connected');
+    // Socket.io does not replay events emitted while a socket was
+    // disconnected — a server restart, deploy, or any connect_error/backoff
+    // cycle can silently drop a yellow_zone.*/notification.* event with
+    // nothing left to signal it happened. Refetching both realtime-backed
+    // surfaces on every successful (re)connect — not just the first one —
+    // closes that gap the same "invalidate, never trust the socket payload"
+    // way every other realtime handler here already works: this is a
+    // cache-invalidation signal, not a second state-sync system, and a
+    // redundant refetch on the ordinary first connect is harmless. No other
+    // Phase 0-5 feature listens for socket events at all (see
+    // YELLOW_ZONE_EVENTS/NOTIFICATION_EVENTS below — the complete set), so
+    // these two query keys are the complete catch-up scope.
+    const handleConnect = () => {
+      setConnectionStatus('connected');
+      void queryClient.invalidateQueries({ queryKey: ['yellow-zone'] });
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    };
     const handleDisconnect = () => setConnectionStatus('connecting');
 
     // The other half of the reconnect-with-a-stale-token fix (see

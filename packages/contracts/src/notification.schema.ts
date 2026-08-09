@@ -38,8 +38,18 @@ export const notificationSchema = z.object({
 });
 export type NotificationDto = z.infer<typeof notificationSchema>;
 
+// NOT z.coerce.boolean() — that coerces via JS truthiness, so the literal
+// query string "false" (a non-empty string) parses to `true`, silently
+// inverting the filter. An explicit closed set, transformed to a real
+// boolean, matches this file's own notificationTypeSchema/
+// notificationTargetTypeSchema pattern (and pagination.schema.ts's
+// sortOrderSchema) — a value that isn't exactly "true" or "false" fails
+// validation with the same 400 every other malformed query param in this
+// codebase gets, rather than silently defaulting to some guessed behavior.
+const booleanQueryParamSchema = z.enum(['true', 'false']).transform((value) => value === 'true');
+
 export const notificationListQuerySchema = paginationQuerySchema.extend({
-  unreadOnly: z.coerce.boolean().optional(),
+  unreadOnly: booleanQueryParamSchema.optional(),
 });
 export type NotificationListQuery = z.infer<typeof notificationListQuerySchema>;
 

@@ -279,6 +279,16 @@ export function createVoiceService({
       // createEscalationForAttempt's own idempotency guard) — nothing new
       // happened, so nothing to notify anyone about either.
       if (escalation) {
+        // No explicit organizationId here — Membership is in
+        // core/prisma.ts's TENANT_SCOPED_MODELS, so the extension injects
+        // it, same as every other query against a tenant-scoped model in
+        // this codebase that doesn't repeat it by hand. Worth calling out
+        // at this specific call site: if Membership were ever removed from
+        // that set, this query would notify every organization's
+        // OWNER/ADMIN/DISPATCHER about every other organization's
+        // escalations — a severe cross-tenant leak with nothing local here
+        // to catch it. Covered today by notification.test.ts's
+        // "never leaks another organization's notifications".
         const recipients = await tx.membership.findMany({
           where: { role: { in: [...YELLOW_ZONE_ESCALATION_RECIPIENT_ROLES] }, status: 'ACTIVE' },
           select: { userId: true },
