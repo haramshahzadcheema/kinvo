@@ -39,22 +39,15 @@ export function CallsPage({ onNavigate }: { onNavigate: (tab: 'assignments') => 
 
   return (
     <div className="animate-[tideIn_0.2s_ease]">
-      <div className="mb-5">
-        <h1 className="text-lg font-bold text-[var(--text-strong)]">Calls</h1>
-        <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-          What CALL-E has been doing — every automated driver call, across every ship.
-        </p>
-      </div>
-
       <div className="mb-3.5 grid grid-cols-2 gap-2.5 sm:grid-cols-5">
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-card)] px-3.5 py-2.5 text-left">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] px-3.5 py-3 text-left">
           <div className="text-[length:var(--text-2)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
             Calling now
           </div>
           {countsLoading ? (
-            <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[var(--surface-muted-3)]" />
+            <div className="mt-1.5 h-6 w-8 animate-pulse rounded bg-[var(--surface-muted-3)]" />
           ) : (
-            <div className="mt-0.5 text-lg font-bold" style={{ color: CALL_STATUS_STYLE.CALLING.color }}>
+            <div className="mt-0.5 font-mono text-xl font-bold" style={{ color: CALL_STATUS_STYLE.CALLING.color }}>
               {activeCount}
             </div>
           )}
@@ -63,7 +56,7 @@ export function CallsPage({ onNavigate }: { onNavigate: (tab: 'assignments') => 
           <button
             key={outcome}
             onClick={() => changeOutcomeFilter(outcomeFilter === outcome ? '' : outcome)}
-            className="rounded-xl border px-3.5 py-2.5 text-left transition"
+            className="rounded-2xl border px-3.5 py-3 text-left transition"
             style={{
               borderColor: outcomeFilter === outcome ? CALL_STATUS_STYLE[outcome].color : 'var(--border)',
               background: outcomeFilter === outcome ? CALL_STATUS_STYLE[outcome].bg : 'var(--surface-card)',
@@ -73,9 +66,9 @@ export function CallsPage({ onNavigate }: { onNavigate: (tab: 'assignments') => 
               {ATTEMPT_OUTCOME_LABEL[outcome]}
             </div>
             {countsLoading ? (
-              <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[var(--surface-muted-3)]" />
+              <div className="mt-1.5 h-6 w-8 animate-pulse rounded bg-[var(--surface-muted-3)]" />
             ) : (
-              <div className="mt-0.5 text-lg font-bold" style={{ color: CALL_STATUS_STYLE[outcome].color }}>
+              <div className="mt-0.5 font-mono text-xl font-bold" style={{ color: CALL_STATUS_STYLE[outcome].color }}>
                 {counts[outcome]}
               </div>
             )}
@@ -92,49 +85,43 @@ export function CallsPage({ onNavigate }: { onNavigate: (tab: 'assignments') => 
         </button>
       )}
 
-      <div className="mb-3.5 rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-4.5">
-        <h3 className="mb-3 text-[length:var(--text-4)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-          Calling now
-        </h3>
-        {activeLoading && (
-          <div className="flex flex-col gap-2">
-            {[0, 1].map((i) => (
-              <div key={i} className="h-9 animate-pulse rounded-lg bg-[var(--surface-muted-2)]" />
-            ))}
-          </div>
-        )}
-        {activeError && <p className="text-xs text-[var(--danger)]">Could not load active calls.</p>}
-        {!activeLoading && !activeError && activeCalls.length === 0 && (
-          <p className="text-xs text-[var(--text-muted)]">No calls in progress right now.</p>
-        )}
-        {!activeLoading && activeCalls.length > 0 && (
-          <div className="flex flex-col gap-2">
-            {activeCalls.map((call) => (
-              <div
-                key={call.id}
-                onClick={() => setSelectedCall(call)}
-                className="flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-[var(--surface-muted)] px-3 py-2 transition hover:bg-[var(--surface-page-1)]"
-              >
-                <div className="min-w-0">
-                  <span className="truncate text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">
-                    {call.driverName}
-                  </span>
-                  <span className="ml-1.5 text-[length:var(--text-4)] text-[var(--text-muted)]">
-                    {call.shipName} · {call.destination}
-                  </span>
-                </div>
-                <span
-                  className="flex flex-shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[length:var(--text-2)] font-semibold"
-                  style={{ background: CALL_STATUS_STYLE.CALLING.bg, color: CALL_STATUS_STYLE.CALLING.color }}
-                >
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
-                  {CALL_STATUS_LABEL.CALLING}
+      {!activeLoading && !activeError && activeCalls.length > 0 && (
+        <div className="mb-3.5 flex flex-col gap-2 rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--accent-hover)] p-4.5">
+          <h3 className="text-[length:var(--text-3)] font-semibold uppercase tracking-wide text-white/70">
+            Calling now
+          </h3>
+          {activeCalls.map((call) => (
+            <div
+              key={call.id}
+              onClick={() => setSelectedCall(call)}
+              className="flex cursor-pointer items-center justify-between gap-2 rounded-xl bg-white/10 px-3.5 py-2.5 transition hover:bg-white/15"
+            >
+              <div className="min-w-0">
+                <span className="truncate text-[length:var(--text-7)] font-semibold text-white">
+                  {call.driverName}
+                </span>
+                <span className="ml-1.5 text-[length:var(--text-4)] text-white/70">
+                  {call.shipName} · {call.destination}
                 </span>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+              <span className="flex flex-shrink-0 items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-[length:var(--text-2)] font-semibold text-white">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+                {CALL_STATUS_LABEL.CALLING}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {activeLoading && (
+        <div className="mb-3.5 flex flex-col gap-2">
+          {[0, 1].map((i) => (
+            <div key={i} className="h-14 animate-pulse rounded-2xl bg-[var(--surface-muted-2)]" />
+          ))}
+        </div>
+      )}
+      {activeError && (
+        <p className="mb-3.5 text-xs text-[var(--danger)]">Could not load active calls.</p>
+      )}
 
       <h3 className="mb-2.5 text-[length:var(--text-4)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
         Call history
@@ -211,7 +198,7 @@ function CallRow({ call, onOpen }: { call: ResolvedVoiceCallDto; onOpen: () => v
   return (
     <div
       onClick={onOpen}
-      className="cursor-pointer rounded-lg border border-[var(--border)] bg-[var(--surface-card)] px-3.5 py-3 transition hover:bg-[var(--surface-page-1)]"
+      className="cursor-pointer rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] px-4 py-3 transition hover:bg-[var(--surface-page-1)]"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
@@ -296,13 +283,13 @@ function CallDetailModal({
         <div className="mt-4.5 flex gap-2">
           <button
             onClick={onClose}
-            className="flex-1 rounded-lg border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)]"
+            className="flex-1 rounded-full border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)]"
           >
             Close
           </button>
           <button
             onClick={onViewAssignment}
-            className="flex-1 rounded-lg bg-[var(--accent)] py-2 text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)]"
+            className="flex-1 rounded-full bg-[var(--accent)] py-2 text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)]"
           >
             View in Assignments
           </button>

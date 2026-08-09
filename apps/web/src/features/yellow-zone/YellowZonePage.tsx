@@ -53,27 +53,21 @@ export function YellowZonePage({ onNavigate }: { onNavigate: (tab: 'assignments'
 
   return (
     <div className="animate-[tideIn_0.2s_ease]">
-      <div className="mb-5 flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-bold text-[var(--text-strong)]">Yellow Zone</h1>
-          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-            Automated calls CALL-E couldn't resolve on its own — reviewed and cleared here.
-          </p>
-        </div>
-        {connectionStatus === 'connecting' && (
+      {connectionStatus === 'connecting' && (
+        <div className="mb-3.5 flex justify-end">
           <span className="flex flex-shrink-0 items-center gap-1.5 rounded-full bg-[var(--surface-neutral-chip)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-[var(--text-muted)]">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
             Reconnecting…
           </span>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="mb-3.5 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         {STATUS_FILTERS.map((status) => (
           <button
             key={status}
             onClick={() => changeStatusFilter(statusFilter === status ? '' : status)}
-            className="rounded-xl border px-3.5 py-2.5 text-left transition"
+            className="rounded-2xl border px-3.5 py-3 text-left transition"
             style={{
               borderColor: statusFilter === status ? YELLOW_ZONE_STATUS_STYLE[status].color : 'var(--border)',
               background: statusFilter === status ? YELLOW_ZONE_STATUS_STYLE[status].bg : 'var(--surface-card)',
@@ -83,10 +77,10 @@ export function YellowZonePage({ onNavigate }: { onNavigate: (tab: 'assignments'
               {YELLOW_ZONE_STATUS_LABEL[status]}
             </div>
             {countsLoading ? (
-              <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[var(--surface-muted-3)]" />
+              <div className="mt-1.5 h-6 w-8 animate-pulse rounded bg-[var(--surface-muted-3)]" />
             ) : (
               <div
-                className="mt-0.5 text-lg font-bold"
+                className="mt-0.5 font-mono text-xl font-bold"
                 style={{ color: YELLOW_ZONE_STATUS_STYLE[status].color }}
               >
                 {counts?.[status] ?? 0}
@@ -210,7 +204,7 @@ function YellowZoneRow({ item, onOpen }: { item: YellowZoneItemDto; onOpen: () =
   return (
     <div
       onClick={onOpen}
-      className="cursor-pointer rounded-lg border border-[var(--border)] bg-[var(--surface-card)] px-3.5 py-3 transition hover:bg-[var(--surface-page-1)]"
+      className="cursor-pointer rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] px-4 py-3 transition hover:bg-[var(--surface-page-1)]"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
@@ -439,7 +433,7 @@ function YellowZoneDetailModal({
             <button
               onClick={handleClaim}
               disabled={isMutating}
-              className="flex-1 rounded-lg bg-[var(--accent)] py-2 text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
+              className="flex-1 rounded-full bg-[var(--accent)] py-2 text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
             >
               Claim
             </button>
@@ -447,7 +441,7 @@ function YellowZoneDetailModal({
           {item.status === 'IN_REVIEW' && actionMode === 'none' && (
             <button
               onClick={() => setActionMode('resolve')}
-              className="flex-1 rounded-lg bg-[var(--accent)] py-2 text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)]"
+              className="flex-1 rounded-full bg-[var(--accent)] py-2 text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)]"
             >
               Resolve
             </button>
@@ -460,7 +454,7 @@ function YellowZoneDetailModal({
             <button
               onClick={handleUnclaim}
               disabled={isMutating}
-              className="flex-1 rounded-lg border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)] disabled:opacity-50"
+              className="flex-1 rounded-full border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)] disabled:opacity-50"
             >
               Release
             </button>
@@ -468,14 +462,14 @@ function YellowZoneDetailModal({
           {(item.status === 'PENDING' || item.status === 'IN_REVIEW') && actionMode === 'none' && (
             <button
               onClick={() => setActionMode('dismiss')}
-              className="flex-1 rounded-lg border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)]"
+              className="flex-1 rounded-full border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)]"
             >
               Dismiss
             </button>
           )}
           <button
             onClick={onViewAssignment}
-            className="flex-1 rounded-lg border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)]"
+            className="flex-1 rounded-full border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)]"
           >
             View in Assignments
           </button>

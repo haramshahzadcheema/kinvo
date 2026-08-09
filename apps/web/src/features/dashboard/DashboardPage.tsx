@@ -53,41 +53,92 @@ export function DashboardPage({
 
   const isLoading = shipStatsLoading || driverStatsLoading;
 
+  const hasActivity = (recentShips?.items.length ?? 0) > 0 || (recentDrivers?.items.length ?? 0) > 0;
+
   return (
     <div className="animate-[tideIn_0.2s_ease]">
-      <div className="mb-5">
-        <h1 className="text-lg font-bold text-[var(--text-strong)]">Dashboard</h1>
-        <p className="mt-0.5 text-xs text-[var(--text-muted)]">What needs your attention right now.</p>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard label="Recruiting" value={shipStats.RECRUITING} tone="var(--warning)" loading={isLoading} onClick={() => onNavigate('ships')} />
+        <StatCard label="In progress" value={shipStats.IN_PROGRESS} tone="var(--info)" loading={isLoading} onClick={() => onNavigate('ships')} />
+        <StatCard label="Drivers idle" value={driverStats.IDLE} tone="var(--text-secondary)" loading={isLoading} onClick={() => onNavigate('drivers')} />
+        <StatCard label="Drivers on call" value={driverStats.ON_CALL} tone="var(--warning)" loading={isLoading} onClick={() => onNavigate('drivers')} />
       </div>
 
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-        <StatCard
-          label="Recruiting"
-          value={shipStats.RECRUITING}
-          tone="var(--warning)"
-          loading={isLoading}
-        />
-        <StatCard
-          label="In Progress"
-          value={shipStats.IN_PROGRESS}
-          tone="var(--info)"
-          loading={isLoading}
-        />
-        <StatCard
-          label="Drivers idle"
-          value={driverStats.IDLE}
-          tone="var(--text-muted)"
-          loading={isLoading}
-        />
-        <StatCard
-          label="Drivers on call"
-          value={driverStats.ON_CALL}
-          tone="var(--warning)"
-          loading={isLoading}
-        />
+      <div className="mt-3.5 grid grid-cols-1 gap-3.5 lg:grid-cols-[1.6fr_1fr]">
+        <Panel title="Incoming vessels">
+          {upcoming.length === 0 && (
+            <p className="text-xs text-[var(--text-muted)]">No ships with a scheduled ETA yet.</p>
+          )}
+          <div className="flex flex-col gap-1.5">
+            {upcoming.map((ship) => (
+              <div
+                key={ship.id}
+                onClick={() => onNavigate('ships')}
+                className="flex cursor-pointer items-center justify-between gap-3 rounded-xl px-3 py-2.5 transition hover:bg-[var(--surface-page-1)]"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">
+                    {ship.shipName}
+                  </div>
+                  <div className="mt-0.5 text-[length:var(--text-4)] text-[var(--text-muted)]">
+                    {ship.berth ? `Berth ${ship.berth}` : 'Berth —'}
+                  </div>
+                </div>
+                <div className="flex flex-shrink-0 items-center gap-2.5">
+                  <span
+                    className="rounded-full px-2 py-0.5 text-[length:var(--text-2)] font-semibold"
+                    style={{
+                      background: SHIP_STATUS_STYLE[ship.status].bg,
+                      color: SHIP_STATUS_STYLE[ship.status].color,
+                    }}
+                  >
+                    {SHIP_STATUS_LABEL[ship.status]}
+                  </span>
+                  <span className="font-mono text-[length:var(--text-6)] text-[var(--text-secondary)]">
+                    {ship.eta ? formatDateTime(ship.eta) : '—'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Activity">
+          {!hasActivity && <p className="text-xs text-[var(--text-muted)]">No activity yet.</p>}
+          <div className="flex flex-col gap-2">
+            {recentShips?.items.slice(0, 3).map((ship) => (
+              <div
+                key={ship.id}
+                onClick={() => onNavigate('ships')}
+                className="flex cursor-pointer items-start justify-between gap-2 rounded-lg px-2.5 py-1.5 transition hover:bg-[var(--surface-page-1)]"
+              >
+                <span className="min-w-0 truncate text-[length:var(--text-6)] text-[var(--text-secondary)]">
+                  Ship <span className="font-semibold text-[var(--text-strong)]">{ship.shipName}</span> updated
+                </span>
+                <span className="flex-shrink-0 text-[length:var(--text-3)] text-[var(--text-muted)]">
+                  {formatRelativeTime(ship.updatedAt)}
+                </span>
+              </div>
+            ))}
+            {recentDrivers?.items.slice(0, 3).map((driver) => (
+              <div
+                key={driver.id}
+                onClick={() => onNavigate('drivers')}
+                className="flex cursor-pointer items-start justify-between gap-2 rounded-lg px-2.5 py-1.5 transition hover:bg-[var(--surface-page-1)]"
+              >
+                <span className="min-w-0 truncate text-[length:var(--text-6)] text-[var(--text-secondary)]">
+                  Driver <span className="font-semibold text-[var(--text-strong)]">{driver.fullName}</span> updated
+                </span>
+                <span className="flex-shrink-0 text-[length:var(--text-3)] text-[var(--text-muted)]">
+                  {formatRelativeTime(driver.updatedAt)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Panel>
       </div>
 
-      <div className="mt-5 grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+      <div className="mt-3.5 grid grid-cols-1 gap-3.5 lg:grid-cols-2">
         <Panel title="Shortages">
           {shortages.length === 0 && (
             <p className="text-xs text-[var(--text-muted)]">Every active destination is fully staffed.</p>
@@ -193,71 +244,17 @@ export function DashboardPage({
           </div>
         </Panel>
 
-        <Panel title="Upcoming ETAs">
-          {upcoming.length === 0 && (
-            <p className="text-xs text-[var(--text-muted)]">No ships with a scheduled ETA yet.</p>
-          )}
-          <div className="flex flex-col gap-2">
-            {upcoming.map((ship) => (
-              <div
-                key={ship.id}
-                onClick={() => onNavigate('ships')}
-                className="flex cursor-pointer items-center justify-between rounded-lg border border-[var(--surface-muted)] px-3 py-2 transition hover:bg-[var(--surface-page-1)]"
-              >
-                <span className="text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">{ship.shipName}</span>
-                <span className="text-[length:var(--text-4)] text-[var(--text-muted)]">{formatDateTime(ship.eta)}</span>
-              </div>
-            ))}
-          </div>
-        </Panel>
-
-        <Panel title="Recently updated">
-          {(recentShips?.items.length ?? 0) === 0 && (recentDrivers?.items.length ?? 0) === 0 && (
-            <p className="text-xs text-[var(--text-muted)]">No activity yet.</p>
-          )}
-          <div className="flex flex-col gap-2">
-            {recentShips?.items.slice(0, 3).map((ship) => (
-              <div
-                key={ship.id}
-                onClick={() => onNavigate('ships')}
-                className="flex cursor-pointer items-center justify-between rounded-lg border border-[var(--surface-muted)] px-3 py-2 transition hover:bg-[var(--surface-page-1)]"
-              >
-                <span className="text-[length:var(--text-7)] text-[var(--text-strong)]">
-                  Ship <span className="font-semibold">{ship.shipName}</span>
-                </span>
-                <span className="text-[length:var(--text-4)] text-[var(--text-muted)]">
-                  {formatRelativeTime(ship.updatedAt)}
-                </span>
-              </div>
-            ))}
-            {recentDrivers?.items.slice(0, 3).map((driver) => (
-              <div
-                key={driver.id}
-                onClick={() => onNavigate('drivers')}
-                className="flex cursor-pointer items-center justify-between rounded-lg border border-[var(--surface-muted)] px-3 py-2 transition hover:bg-[var(--surface-page-1)]"
-              >
-                <span className="text-[length:var(--text-7)] text-[var(--text-strong)]">
-                  Driver <span className="font-semibold">{driver.fullName}</span>
-                </span>
-                <span className="text-[length:var(--text-4)] text-[var(--text-muted)]">
-                  {formatRelativeTime(driver.updatedAt)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Panel>
-
         <Panel title="Quick actions">
           <div className="flex flex-col gap-2">
             <button
               onClick={() => onNavigate('ships', true)}
-              className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-left text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)]"
+              className="rounded-full bg-[var(--accent)] px-4 py-2.5 text-left text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)]"
             >
               + Create ship operation
             </button>
             <button
               onClick={() => onNavigate('drivers', true)}
-              className="rounded-lg border border-[var(--border)] bg-[var(--surface-card)] px-4 py-2.5 text-left text-[length:var(--text-7)] font-semibold text-[var(--accent)] hover:bg-[var(--surface-page-1)]"
+              className="rounded-full border border-[var(--border)] bg-[var(--surface-card)] px-4 py-2.5 text-left text-[length:var(--text-7)] font-semibold text-[var(--accent)] hover:bg-[var(--surface-page-1)]"
             >
               + Add driver
             </button>
@@ -298,25 +295,30 @@ function StatCard({
   value,
   tone,
   loading,
+  onClick,
 }: {
   label: string;
   value: number;
   tone: string;
   loading: boolean;
+  onClick: () => void;
 }) {
   return (
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-card)] px-3.5 py-2.5">
+    <button
+      onClick={onClick}
+      className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] px-4 py-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg"
+    >
       <div className="text-[length:var(--text-2)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
         {label}
       </div>
       {loading ? (
-        <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[var(--surface-muted-3)]" />
+        <div className="mt-2 h-6 w-10 animate-pulse rounded bg-[var(--surface-muted-3)]" />
       ) : (
-        <div className="mt-0.5 text-lg font-bold" style={{ color: tone }}>
+        <div className="mt-1 font-mono text-2xl font-bold" style={{ color: tone }}>
           {value}
         </div>
       )}
-    </div>
+    </button>
   );
 }
 
