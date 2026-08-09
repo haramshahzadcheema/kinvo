@@ -64,7 +64,7 @@ export function DriversPage({ autoOpenCreate = false }: { autoOpenCreate?: boole
             onClick={() =>
               setAvailabilityFilter((current) => (current === availability ? '' : availability))
             }
-            className="rounded-xl border px-3.5 py-2.5 text-left transition"
+            className="rounded-2xl border px-3.5 py-3 text-left transition"
             style={{
               borderColor:
                 availabilityFilter === availability
@@ -80,7 +80,7 @@ export function DriversPage({ autoOpenCreate = false }: { autoOpenCreate?: boole
               {AVAILABILITY_LABEL[availability]}
             </div>
             <div
-              className="mt-0.5 text-lg font-bold"
+              className="mt-0.5 font-mono text-xl font-bold"
               style={{ color: AVAILABILITY_STYLE[availability].color }}
             >
               {stats[availability]}
@@ -224,7 +224,7 @@ export function DriversPage({ autoOpenCreate = false }: { autoOpenCreate?: boole
                 <div
                   key={driver.id}
                   onClick={() => setSelectedDriverId(driver.id)}
-                  className="rounded-xl border border-[var(--border)] bg-[var(--surface-card)] p-4"
+                  className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-4"
                 >
                   <div className="flex items-start justify-between">
                     <div className="font-semibold text-[var(--text-strong)]">{driver.fullName}</div>

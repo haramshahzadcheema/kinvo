@@ -134,7 +134,7 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
             onClick={() =>
               setStatusFilter((current) => (current === item.status ? '' : item.status))
             }
-            className="rounded-xl border px-3.5 py-2.5 text-left transition"
+            className="rounded-2xl border px-3.5 py-3 text-left transition"
             style={{
               borderColor: statusFilter === item.status ? item.tone : 'var(--border)',
               background:
@@ -144,7 +144,7 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
             <div className="text-[length:var(--text-2)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
               {item.label}
             </div>
-            <div className="mt-0.5 text-lg font-bold" style={{ color: item.tone }}>
+            <div className="mt-0.5 font-mono text-xl font-bold" style={{ color: item.tone }}>
               {stats[item.status]}
             </div>
           </button>
@@ -349,6 +349,8 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
           {data.items.map((ship) => {
             const style = SHIP_STATUS_STYLE[ship.status];
             const needed = ship.truckRequirements.reduce((sum, r) => sum + r.quantityNeeded, 0);
+            const confirmed = ship.truckRequirements.reduce((sum, r) => sum + r.confirmedCount, 0);
+            const confirmedPct = needed > 0 ? Math.min(100, Math.round((confirmed / needed) * 100)) : 0;
             const isActive = ship.status !== 'COMPLETED' && ship.status !== 'CANCELLED';
             const arrivingSoon = isActive && isWithinHours(ship.eta, 48);
             const etaLabel = formatDateTime(ship.eta);
@@ -392,8 +394,19 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
                   )}
                 </div>
                 {needed > 0 && (
-                  <div className="mt-2 text-xs text-[var(--text-muted)]">
-                    <span className="font-mono">{needed}</span> trucks needed
+                  <div className="mt-3.5">
+                    <div className="flex items-center justify-between text-[length:var(--text-4)] text-[var(--text-muted)]">
+                      <span>Drivers confirmed</span>
+                      <span className="font-mono">
+                        {confirmed}/{needed}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--surface-muted)]">
+                      <div
+                        className="h-full rounded-full bg-[var(--accent)]"
+                        style={{ width: `${confirmedPct}%` }}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
