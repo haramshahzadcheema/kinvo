@@ -7,10 +7,10 @@ import { SHIP_STATUS_LABEL, SHIP_STATUS_STYLE } from './statusStyles';
 import { useShipMutations, useShips, useShipStats } from './useShips';
 
 const STAT_STATUSES: { status: ShipStatusValue; label: string; tone: string }[] = [
-  { status: 'RECRUITING', label: 'Recruiting', tone: '#B4762A' },
-  { status: 'CONFIRMED', label: 'Confirmed', tone: '#1E7A8C' },
-  { status: 'IN_PROGRESS', label: 'In Progress', tone: '#2A5DA6' },
-  { status: 'COMPLETED', label: 'Completed', tone: '#3D8A4E' },
+  { status: 'RECRUITING', label: 'Recruiting', tone: 'var(--warning)' },
+  { status: 'CONFIRMED', label: 'Confirmed', tone: 'var(--accent)' },
+  { status: 'IN_PROGRESS', label: 'In Progress', tone: 'var(--info)' },
+  { status: 'COMPLETED', label: 'Completed', tone: 'var(--success)' },
 ];
 
 const DEFAULT_SORT = {
@@ -136,12 +136,12 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
             }
             className="rounded-xl border px-3.5 py-2.5 text-left transition"
             style={{
-              borderColor: statusFilter === item.status ? item.tone : '#ECE1CC',
+              borderColor: statusFilter === item.status ? item.tone : 'var(--border)',
               background:
-                statusFilter === item.status ? SHIP_STATUS_STYLE[item.status].bg : '#FFFFFF',
+                statusFilter === item.status ? SHIP_STATUS_STYLE[item.status].bg : 'var(--surface-card)',
             }}
           >
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+            <div className="text-[length:var(--text-2)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
               {item.label}
             </div>
             <div className="mt-0.5 text-lg font-bold" style={{ color: item.tone }}>
@@ -157,12 +157,12 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search ship, company, or destination"
-            className="w-full rounded-full border border-[#ECE1CC] bg-white py-2.5 pl-4 pr-4 text-[12.5px] text-[#0F2A38] outline-none sm:max-w-[280px]"
+            className="w-full rounded-full border border-[var(--border)] bg-[var(--surface-card)] py-2.5 pl-4 pr-4 text-[length:var(--text-7)] text-[var(--text-strong)] outline-none sm:max-w-[280px]"
           />
           <select
             value={sortValue}
             onChange={(e) => setSortValue(e.target.value)}
-            className="w-full rounded-full border border-[#ECE1CC] bg-white py-2.5 pl-4 pr-4 text-[12.5px] text-[#0F2A38] outline-none sm:w-auto"
+            className="w-full rounded-full border border-[var(--border)] bg-[var(--surface-card)] py-2.5 pl-4 pr-4 text-[length:var(--text-7)] text-[var(--text-strong)] outline-none sm:w-auto"
           >
             {SORT_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -176,7 +176,7 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
                 setSearch('');
                 setStatusFilter('');
               }}
-              className="whitespace-nowrap rounded-full px-3 py-2.5 text-[11.5px] font-semibold text-[#8B9AA3] hover:text-[#0F2A38]"
+              className="whitespace-nowrap rounded-full px-3 py-2.5 text-[length:var(--text-5)] font-semibold text-[var(--text-muted)] hover:text-[var(--text-strong)]"
             >
               Clear filters
             </button>
@@ -184,14 +184,14 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
         </div>
         <button
           onClick={() => setShowAddShip((v) => !v)}
-          className="whitespace-nowrap rounded-full bg-[#1E7A8C] px-4 py-2 text-xs font-semibold text-white hover:bg-[#175F6E] sm:w-auto"
+          className="whitespace-nowrap rounded-full bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--accent-hover)] sm:w-auto"
         >
           + Add Ship
         </button>
       </div>
 
       {showAddShip && (
-        <div className="mb-3.5 rounded-2xl border border-[#ECE1CC] bg-white p-5">
+        <div className="mb-3.5 rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-5">
           <SectionLabel>Ship information</SectionLabel>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <LabeledInput
@@ -223,13 +223,13 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
             />
           </div>
           <div className="mt-3">
-            <div className="mb-1.5 text-[10.5px] text-[#8B9AA3]">Notes</div>
+            <div className="mb-1.5 text-[length:var(--text-3)] text-[var(--text-muted)]">Notes</div>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
               placeholder="General remarks about this ship (optional)"
-              className="w-full rounded-lg border border-[#ECE1CC] px-3 py-2 text-[12.5px] outline-none"
+              className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-[length:var(--text-7)] outline-none"
             />
           </div>
 
@@ -239,16 +239,16 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
               {destinations.map((row, idx) => (
                 <div
                   key={row.key}
-                  className="rounded-xl border border-[#F5EEE0] bg-[#FBF6EE] p-3.5"
+                  className="rounded-xl border border-[var(--surface-muted)] bg-[var(--surface-page-1)] p-3.5"
                 >
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[10.5px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+                    <span className="text-[length:var(--text-3)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                       Destination {idx + 1}
                     </span>
                     {destinations.length > 1 && (
                       <button
                         onClick={() => setDestinations((rows) => rows.filter((_, i) => i !== idx))}
-                        className="text-sm text-[#C1503B]"
+                        className="text-sm text-[var(--danger)]"
                         aria-label="Remove destination"
                       >
                         ×
@@ -260,13 +260,13 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
                       value={row.destination}
                       onChange={(e) => updateDestination(idx, { destination: e.target.value })}
                       placeholder="e.g. Salalah, Oman"
-                      className="col-span-2 rounded-lg border border-[#ECE1CC] px-3 py-2 text-[12.5px] outline-none"
+                      className="col-span-2 rounded-lg border border-[var(--border)] px-3 py-2 text-[length:var(--text-7)] outline-none"
                     />
                     <input
                       value={row.truckType}
                       onChange={(e) => updateDestination(idx, { truckType: e.target.value })}
                       placeholder="Truck type"
-                      className="rounded-lg border border-[#ECE1CC] px-3 py-2 text-[12.5px] outline-none"
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-[length:var(--text-7)] outline-none"
                     />
                     <input
                       value={row.quantityNeeded}
@@ -276,7 +276,7 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
                         updateDestination(idx, { quantityNeeded: Number(e.target.value) })
                       }
                       placeholder="Trucks"
-                      className="rounded-lg border border-[#ECE1CC] px-3 py-2 text-[12.5px] outline-none"
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-[length:var(--text-7)] outline-none"
                     />
                     <input
                       value={row.rate ?? ''}
@@ -289,13 +289,13 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
                         })
                       }
                       placeholder="Rate (PKR)"
-                      className="rounded-lg border border-[#ECE1CC] px-3 py-2 text-[12.5px] outline-none"
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-[length:var(--text-7)] outline-none"
                     />
                     <input
                       value={row.notes ?? ''}
                       onChange={(e) => updateDestination(idx, { notes: e.target.value })}
                       placeholder="Notes (optional)"
-                      className="rounded-lg border border-[#ECE1CC] px-3 py-2 text-[12.5px] outline-none"
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-[length:var(--text-7)] outline-none"
                     />
                   </div>
                 </div>
@@ -303,18 +303,18 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
             </div>
             <button
               onClick={() => setDestinations((rows) => [...rows, emptyCard()])}
-              className="mt-2.5 rounded-full border border-[#ECE1CC] bg-white px-3.5 py-1.5 text-[11.5px] font-semibold text-[#1E7A8C]"
+              className="mt-2.5 rounded-full border border-[var(--border)] bg-[var(--surface-card)] px-3.5 py-1.5 text-[length:var(--text-5)] font-semibold text-[var(--accent)]"
             >
               + Add destination
             </button>
           </div>
 
-          {error && <p className="mt-3 text-xs text-[#C1503B]">{error}</p>}
+          {error && <p className="mt-3 text-xs text-[var(--danger)]">{error}</p>}
 
           <button
             onClick={submitAddShip}
             disabled={!shipName || createShip.isPending}
-            className="mt-4 w-full rounded-full bg-[#F2A65A] px-4.5 py-2 text-[12.5px] font-semibold text-white disabled:opacity-50 sm:w-auto"
+            className="mt-4 w-full rounded-full bg-[#F2A65A] px-4.5 py-2 text-[length:var(--text-7)] font-semibold text-white disabled:opacity-50 sm:w-auto"
           >
             {createShip.isPending ? 'Creating…' : 'Create Ship Operation'}
           </button>
@@ -322,13 +322,13 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
       )}
 
       {isLoading && <ShipListSkeleton />}
-      {isError && <p className="text-sm text-[#C1503B]">Could not load ships.</p>}
+      {isError && <p className="text-sm text-[var(--danger)]">Could not load ships.</p>}
       {!isLoading && data && data.items.length === 0 && (
-        <div className="rounded-2xl border border-[#ECE1CC] bg-white py-10 text-center">
-          <div className="mb-1 text-[15px] font-semibold text-[#0F2A38]">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] py-10 text-center">
+          <div className="mb-1 text-[length:var(--text-10)] font-semibold text-[var(--text-strong)]">
             {hasFilters ? 'No ships match your filters' : 'No ships yet'}
           </div>
-          <p className="mb-4 text-xs text-[#8B9AA3]">
+          <p className="mb-4 text-xs text-[var(--text-muted)]">
             {hasFilters
               ? 'Try clearing the search or status filter above.'
               : 'Create your first ship operation to start tracking truck requirements.'}
@@ -336,7 +336,7 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
           {!hasFilters && (
             <button
               onClick={() => setShowAddShip(true)}
-              className="rounded-full bg-[#1E7A8C] px-4 py-2 text-xs font-semibold text-white hover:bg-[#175F6E]"
+              className="rounded-full bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--accent-hover)]"
             >
               Create Ship
             </button>
@@ -356,43 +356,43 @@ export function ShipsPage({ autoOpenCreate = false }: { autoOpenCreate?: boolean
               <div
                 key={ship.id}
                 onClick={() => setSelectedShipId(ship.id)}
-                className="cursor-pointer rounded-2xl border bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-lg"
-                style={{ borderColor: arrivingSoon ? '#F2A65A' : '#ECE1CC' }}
+                className="cursor-pointer rounded-2xl border bg-[var(--surface-card)] p-5 transition hover:-translate-y-0.5 hover:shadow-lg"
+                style={{ borderColor: arrivingSoon ? '#F2A65A' : 'var(--border)' }}
               >
                 <div className="flex items-start justify-between">
                   <div>
-                    <div className="text-[15px] font-bold text-[#0F2A38]">{ship.shipName}</div>
-                    <div className="mt-0.5 text-xs text-[#8B9AA3]">
+                    <div className="text-[length:var(--text-10)] font-bold text-[var(--text-strong)]">{ship.shipName}</div>
+                    <div className="mt-0.5 text-xs text-[var(--text-muted)]">
                       {ship.berth ? `Berth ${ship.berth} · ` : ''}
                       {ship.truckRequirements.length} destination
                       {ship.truckRequirements.length === 1 ? '' : 's'}
                     </div>
                   </div>
                   <span
-                    className="whitespace-nowrap rounded-full px-2.5 py-1 text-[10.5px] font-semibold"
+                    className="whitespace-nowrap rounded-full px-2.5 py-1 text-[length:var(--text-3)] font-semibold"
                     style={{ background: style.bg, color: style.color }}
                   >
                     {SHIP_STATUS_LABEL[ship.status]}
                   </span>
                 </div>
-                <div className="mt-3.5 flex items-center justify-between text-xs text-[#8B9AA3]">
+                <div className="mt-3.5 flex items-center justify-between text-xs text-[var(--text-muted)]">
                   <span>
                     {etaLabel ? (
                       <>
-                        ETA <span className="font-semibold text-[#0F2A38]">{etaLabel}</span>
+                        ETA <span className="font-semibold text-[var(--text-strong)]">{etaLabel}</span>
                       </>
                     ) : (
                       'No ETA set'
                     )}
                   </span>
                   {arrivingSoon && (
-                    <span className="rounded-full bg-[#FDEFD9] px-2 py-0.5 text-[10px] font-semibold text-[#B4762A]">
+                    <span className="rounded-full bg-[var(--warning-bg)] px-2 py-0.5 text-[length:var(--text-2)] font-semibold text-[var(--warning)]">
                       Arriving soon
                     </span>
                   )}
                 </div>
                 {needed > 0 && (
-                  <div className="mt-2 text-xs text-[#8B9AA3]">
+                  <div className="mt-2 text-xs text-[var(--text-muted)]">
                     <span className="font-mono">{needed}</span> trucks needed
                   </div>
                 )}
@@ -413,10 +413,10 @@ function ShipListSkeleton() {
   return (
     <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
       {[0, 1, 2].map((i) => (
-        <div key={i} className="animate-pulse rounded-2xl border border-[#ECE1CC] bg-white p-5">
-          <div className="h-3.5 w-2/3 rounded bg-[#F0EADC]" />
-          <div className="mt-2.5 h-2.5 w-1/2 rounded bg-[#F5F0E6]" />
-          <div className="mt-5 h-2.5 w-1/3 rounded bg-[#F5F0E6]" />
+        <div key={i} className="animate-pulse rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-5">
+          <div className="h-3.5 w-2/3 rounded bg-[var(--surface-muted-3)]" />
+          <div className="mt-2.5 h-2.5 w-1/2 rounded bg-[var(--surface-muted-2)]" />
+          <div className="mt-5 h-2.5 w-1/3 rounded bg-[var(--surface-muted-2)]" />
         </div>
       ))}
     </div>
@@ -425,7 +425,7 @@ function ShipListSkeleton() {
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <div className="mb-2.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+    <div className="mb-2.5 text-[length:var(--text-3)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
       {children}
     </div>
   );
@@ -446,13 +446,13 @@ function LabeledInput({
 }) {
   return (
     <div>
-      <div className="mb-1.5 text-[10.5px] text-[#8B9AA3]">{label}</div>
+      <div className="mb-1.5 text-[length:var(--text-3)] text-[var(--text-muted)]">{label}</div>
       <input
         value={value}
         type={type}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-lg border border-[#ECE1CC] px-3 py-2 text-[12.5px] outline-none"
+        className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-[length:var(--text-7)] outline-none"
       />
     </div>
   );

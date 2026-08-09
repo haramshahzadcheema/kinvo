@@ -56,33 +56,33 @@ export function DashboardPage({
   return (
     <div className="animate-[tideIn_0.2s_ease]">
       <div className="mb-5">
-        <h1 className="text-lg font-bold text-[#0F2A38]">Dashboard</h1>
-        <p className="mt-0.5 text-xs text-[#8B9AA3]">What needs your attention right now.</p>
+        <h1 className="text-lg font-bold text-[var(--text-strong)]">Dashboard</h1>
+        <p className="mt-0.5 text-xs text-[var(--text-muted)]">What needs your attention right now.</p>
       </div>
 
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         <StatCard
           label="Recruiting"
           value={shipStats.RECRUITING}
-          tone="#B4762A"
+          tone="var(--warning)"
           loading={isLoading}
         />
         <StatCard
           label="In Progress"
           value={shipStats.IN_PROGRESS}
-          tone="#2A5DA6"
+          tone="var(--info)"
           loading={isLoading}
         />
         <StatCard
           label="Drivers idle"
           value={driverStats.IDLE}
-          tone="#8B9AA3"
+          tone="var(--text-muted)"
           loading={isLoading}
         />
         <StatCard
           label="Drivers on call"
           value={driverStats.ON_CALL}
-          tone="#B4762A"
+          tone="var(--warning)"
           loading={isLoading}
         />
       </div>
@@ -90,25 +90,25 @@ export function DashboardPage({
       <div className="mt-5 grid grid-cols-1 gap-3.5 lg:grid-cols-2">
         <Panel title="Shortages">
           {shortages.length === 0 && (
-            <p className="text-xs text-[#8B9AA3]">Every active destination is fully staffed.</p>
+            <p className="text-xs text-[var(--text-muted)]">Every active destination is fully staffed.</p>
           )}
           <div className="flex flex-col gap-2">
             {shortages.map((s) => (
               <div
                 key={s.requirementId}
                 onClick={() => onNavigate('ships')}
-                className="cursor-pointer rounded-lg border border-[#F5EEE0] px-3 py-2 transition hover:bg-[#FBF6EE]"
+                className="cursor-pointer rounded-lg border border-[var(--surface-muted)] px-3 py-2 transition hover:bg-[var(--surface-page-1)]"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-[12.5px] font-semibold text-[#0F2A38]">
+                  <span className="truncate text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">
                     {s.shipName} · {s.destination}
                   </span>
-                  <span className="flex-shrink-0 rounded-full bg-[#FDEFD9] px-2 py-0.5 text-[10px] font-semibold text-[#B4762A]">
+                  <span className="flex-shrink-0 rounded-full bg-[var(--warning-bg)] px-2 py-0.5 text-[length:var(--text-2)] font-semibold text-[var(--warning)]">
                     {s.confirmedCount}/{s.quantityNeeded} confirmed
                   </span>
                 </div>
                 {s.pendingCount > 0 && (
-                  <div className="mt-0.5 text-[11px] text-[#8B9AA3]">
+                  <div className="mt-0.5 text-[length:var(--text-4)] text-[var(--text-muted)]">
                     {s.pendingCount} pending outreach
                   </div>
                 )}
@@ -119,12 +119,12 @@ export function DashboardPage({
 
         <Panel title="Yellow Zone">
           {(yellowZoneStats?.PENDING ?? 0) === 0 ? (
-            <p className="text-xs text-[#8B9AA3]">Good — nothing needs your attention.</p>
+            <p className="text-xs text-[var(--text-muted)]">Good — nothing needs your attention.</p>
           ) : (
             <>
               <div
                 onClick={() => onNavigate('yellow-zone')}
-                className="mb-2 cursor-pointer text-[11px] font-semibold text-[#C1503B] hover:underline"
+                className="mb-2 cursor-pointer text-[length:var(--text-4)] font-semibold text-[var(--danger)] hover:underline"
               >
                 {yellowZoneStats?.PENDING} automated{' '}
                 {yellowZoneStats?.PENDING === 1 ? 'call needs' : 'calls need'} review →
@@ -134,14 +134,14 @@ export function DashboardPage({
                   <div
                     key={item.id}
                     onClick={() => onNavigate('yellow-zone')}
-                    className="cursor-pointer rounded-lg border border-[#F5EEE0] px-3 py-2 transition hover:bg-[#FBF6EE]"
+                    className="cursor-pointer rounded-lg border border-[var(--surface-muted)] px-3 py-2 transition hover:bg-[var(--surface-page-1)]"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-[12.5px] font-semibold text-[#0F2A38]">
+                      <span className="truncate text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">
                         {item.driverName} · {item.shipName}
                       </span>
                       <span
-                        className="flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                        className="flex-shrink-0 rounded-full px-2 py-0.5 text-[length:var(--text-2)] font-semibold"
                         style={{
                           background: YELLOW_ZONE_PRIORITY_STYLE[item.priority].bg,
                           color: YELLOW_ZONE_PRIORITY_STYLE[item.priority].color,
@@ -150,7 +150,7 @@ export function DashboardPage({
                         {item.priority}
                       </span>
                     </div>
-                    <div className="mt-0.5 truncate text-[11px] text-[#8B9AA3]">{item.reason}</div>
+                    <div className="mt-0.5 truncate text-[length:var(--text-4)] text-[var(--text-muted)]">{item.reason}</div>
                   </div>
                 ))}
               </div>
@@ -160,21 +160,21 @@ export function DashboardPage({
 
         <Panel title="Today's operations">
           {today.length === 0 && (
-            <p className="text-xs text-[#8B9AA3]">Nothing scheduled to arrive or report today.</p>
+            <p className="text-xs text-[var(--text-muted)]">Nothing scheduled to arrive or report today.</p>
           )}
           <div className="flex flex-col gap-2">
             {today.map((ship) => (
               <div
                 key={ship.id}
                 onClick={() => onNavigate('ships')}
-                className="cursor-pointer rounded-lg border border-[#F5EEE0] px-3 py-2 transition hover:bg-[#FBF6EE]"
+                className="cursor-pointer rounded-lg border border-[var(--surface-muted)] px-3 py-2 transition hover:bg-[var(--surface-page-1)]"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-[12.5px] font-semibold text-[#0F2A38]">
+                  <span className="text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">
                     {ship.shipName}
                   </span>
                   <span
-                    className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                    className="rounded-full px-2 py-0.5 text-[length:var(--text-2)] font-semibold"
                     style={{
                       background: SHIP_STATUS_STYLE[ship.status].bg,
                       color: SHIP_STATUS_STYLE[ship.status].color,
@@ -183,7 +183,7 @@ export function DashboardPage({
                     {SHIP_STATUS_LABEL[ship.status]}
                   </span>
                 </div>
-                <div className="mt-0.5 text-[11px] text-[#8B9AA3]">
+                <div className="mt-0.5 text-[length:var(--text-4)] text-[var(--text-muted)]">
                   {ship.eta && `ETA ${formatDateTime(ship.eta)}`}
                   {ship.eta && ship.reportingTime && ' · '}
                   {ship.reportingTime && `Reporting ${formatDateTime(ship.reportingTime)}`}
@@ -195,17 +195,17 @@ export function DashboardPage({
 
         <Panel title="Upcoming ETAs">
           {upcoming.length === 0 && (
-            <p className="text-xs text-[#8B9AA3]">No ships with a scheduled ETA yet.</p>
+            <p className="text-xs text-[var(--text-muted)]">No ships with a scheduled ETA yet.</p>
           )}
           <div className="flex flex-col gap-2">
             {upcoming.map((ship) => (
               <div
                 key={ship.id}
                 onClick={() => onNavigate('ships')}
-                className="flex cursor-pointer items-center justify-between rounded-lg border border-[#F5EEE0] px-3 py-2 transition hover:bg-[#FBF6EE]"
+                className="flex cursor-pointer items-center justify-between rounded-lg border border-[var(--surface-muted)] px-3 py-2 transition hover:bg-[var(--surface-page-1)]"
               >
-                <span className="text-[12.5px] font-semibold text-[#0F2A38]">{ship.shipName}</span>
-                <span className="text-[11px] text-[#8B9AA3]">{formatDateTime(ship.eta)}</span>
+                <span className="text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">{ship.shipName}</span>
+                <span className="text-[length:var(--text-4)] text-[var(--text-muted)]">{formatDateTime(ship.eta)}</span>
               </div>
             ))}
           </div>
@@ -213,19 +213,19 @@ export function DashboardPage({
 
         <Panel title="Recently updated">
           {(recentShips?.items.length ?? 0) === 0 && (recentDrivers?.items.length ?? 0) === 0 && (
-            <p className="text-xs text-[#8B9AA3]">No activity yet.</p>
+            <p className="text-xs text-[var(--text-muted)]">No activity yet.</p>
           )}
           <div className="flex flex-col gap-2">
             {recentShips?.items.slice(0, 3).map((ship) => (
               <div
                 key={ship.id}
                 onClick={() => onNavigate('ships')}
-                className="flex cursor-pointer items-center justify-between rounded-lg border border-[#F5EEE0] px-3 py-2 transition hover:bg-[#FBF6EE]"
+                className="flex cursor-pointer items-center justify-between rounded-lg border border-[var(--surface-muted)] px-3 py-2 transition hover:bg-[var(--surface-page-1)]"
               >
-                <span className="text-[12.5px] text-[#0F2A38]">
+                <span className="text-[length:var(--text-7)] text-[var(--text-strong)]">
                   Ship <span className="font-semibold">{ship.shipName}</span>
                 </span>
-                <span className="text-[11px] text-[#8B9AA3]">
+                <span className="text-[length:var(--text-4)] text-[var(--text-muted)]">
                   {formatRelativeTime(ship.updatedAt)}
                 </span>
               </div>
@@ -234,12 +234,12 @@ export function DashboardPage({
               <div
                 key={driver.id}
                 onClick={() => onNavigate('drivers')}
-                className="flex cursor-pointer items-center justify-between rounded-lg border border-[#F5EEE0] px-3 py-2 transition hover:bg-[#FBF6EE]"
+                className="flex cursor-pointer items-center justify-between rounded-lg border border-[var(--surface-muted)] px-3 py-2 transition hover:bg-[var(--surface-page-1)]"
               >
-                <span className="text-[12.5px] text-[#0F2A38]">
+                <span className="text-[length:var(--text-7)] text-[var(--text-strong)]">
                   Driver <span className="font-semibold">{driver.fullName}</span>
                 </span>
-                <span className="text-[11px] text-[#8B9AA3]">
+                <span className="text-[length:var(--text-4)] text-[var(--text-muted)]">
                   {formatRelativeTime(driver.updatedAt)}
                 </span>
               </div>
@@ -251,18 +251,18 @@ export function DashboardPage({
           <div className="flex flex-col gap-2">
             <button
               onClick={() => onNavigate('ships', true)}
-              className="rounded-lg bg-[#1E7A8C] px-4 py-2.5 text-left text-[12.5px] font-semibold text-white hover:bg-[#175F6E]"
+              className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-left text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)]"
             >
               + Create ship operation
             </button>
             <button
               onClick={() => onNavigate('drivers', true)}
-              className="rounded-lg border border-[#ECE1CC] bg-white px-4 py-2.5 text-left text-[12.5px] font-semibold text-[#1E7A8C] hover:bg-[#FBF6EE]"
+              className="rounded-lg border border-[var(--border)] bg-[var(--surface-card)] px-4 py-2.5 text-left text-[length:var(--text-7)] font-semibold text-[var(--accent)] hover:bg-[var(--surface-page-1)]"
             >
               + Add driver
             </button>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[#F5EEE0] pt-3">
+          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[var(--surface-muted)] pt-3">
             <MiniStat
               label="Confirmed drivers"
               value={driverStats.CONFIRMED}
@@ -284,8 +284,8 @@ export function DashboardPage({
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-[#ECE1CC] bg-white p-4.5">
-      <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-4.5">
+      <h3 className="mb-3 text-[length:var(--text-4)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
         {title}
       </h3>
       {children}
@@ -305,12 +305,12 @@ function StatCard({
   loading: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-[#ECE1CC] bg-white px-3.5 py-2.5">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-card)] px-3.5 py-2.5">
+      <div className="text-[length:var(--text-2)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
         {label}
       </div>
       {loading ? (
-        <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[#F0EADC]" />
+        <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[var(--surface-muted-3)]" />
       ) : (
         <div className="mt-0.5 text-lg font-bold" style={{ color: tone }}>
           {value}
@@ -332,7 +332,7 @@ function MiniStat({
 }) {
   return (
     <div className="rounded-lg px-2.5 py-2" style={{ background: style.bg }}>
-      <div className="text-[10px] font-semibold" style={{ color: style.color }}>
+      <div className="text-[length:var(--text-2)] font-semibold" style={{ color: style.color }}>
         {labelOverride}
       </div>
       <div className="text-sm font-bold" style={{ color: style.color }}>

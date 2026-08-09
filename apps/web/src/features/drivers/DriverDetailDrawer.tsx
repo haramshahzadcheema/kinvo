@@ -117,18 +117,18 @@ export function DriverDetailDrawer({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-20 flex items-center justify-center bg-[rgba(15,42,56,0.4)] sm:p-4"
+      className="fixed inset-0 z-20 flex items-center justify-center bg-[var(--surface-overlay)] sm:p-4"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="h-full w-full overflow-y-auto bg-white p-6 sm:h-auto sm:max-h-[85vh] sm:w-[520px] sm:rounded-2xl sm:p-7.5"
+        className="h-full w-full overflow-y-auto bg-[var(--surface-card)] p-6 sm:h-auto sm:max-h-[85vh] sm:w-[520px] sm:rounded-2xl sm:p-7.5"
       >
         {isLoading && <DriverDrawerSkeleton />}
 
         {driver && !editing && (
           <>
             <div className="flex items-center gap-3.5">
-              <div className="flex h-13 w-13 flex-shrink-0 items-center justify-center rounded-full bg-[#1E7A8C] text-lg font-semibold text-white">
+              <div className="flex h-13 w-13 flex-shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-lg font-semibold text-white">
                 {driver.fullName
                   .split(' ')
                   .map((n) => n[0])
@@ -136,13 +136,13 @@ export function DriverDetailDrawer({
                   .join('')}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-lg font-bold text-[#0F2A38]">{driver.fullName}</div>
-                <div className="mt-0.5 text-xs text-[#8B9AA3]">
+                <div className="text-lg font-bold text-[var(--text-strong)]">{driver.fullName}</div>
+                <div className="mt-0.5 text-xs text-[var(--text-muted)]">
                   {driver.truckType ?? '—'} {driver.capacity ? `· ${driver.capacity}` : ''}
                 </div>
               </div>
               <span
-                className="flex-shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                className="flex-shrink-0 rounded-full px-2.5 py-1 text-[length:var(--text-4)] font-semibold"
                 style={{
                   background: AVAILABILITY_STYLE[driver.availability].bg,
                   color: AVAILABILITY_STYLE[driver.availability].color,
@@ -152,21 +152,21 @@ export function DriverDetailDrawer({
               </span>
             </div>
 
-            {error && <p className="mt-3 text-xs text-[#C1503B]">{error}</p>}
+            {error && <p className="mt-3 text-xs text-[var(--danger)]">{error}</p>}
 
             <div className="mt-5 flex flex-wrap items-center gap-2">
               {AVAILABILITY_OPTIONS.filter((a) => a !== driver.availability).map((option) => (
                 <button
                   key={option}
                   onClick={() => handleAvailabilityChange(option)}
-                  className="rounded-full border border-[#ECE1CC] px-3 py-1.5 text-[11.5px] font-semibold text-[#1E7A8C] hover:bg-[#FBF6EE]"
+                  className="rounded-full border border-[var(--border)] px-3 py-1.5 text-[length:var(--text-5)] font-semibold text-[var(--accent)] hover:bg-[var(--surface-page-1)]"
                 >
                   Mark {AVAILABILITY_LABEL[option]}
                 </button>
               ))}
               <button
                 onClick={startEditing}
-                className="ml-auto text-[11.5px] font-semibold text-[#1E7A8C] hover:text-[#175F6E]"
+                className="ml-auto text-[length:var(--text-5)] font-semibold text-[var(--accent)] hover:text-[var(--accent-hover)]"
               >
                 Edit
               </button>
@@ -194,34 +194,34 @@ export function DriverDetailDrawer({
               <Detail label="Currently on" value={driver.currentShipName ?? 'Not assigned'} />
             </div>
             {driver.notes && (
-              <div className="mt-3 border-t border-[#F5EEE0] pt-3">
+              <div className="mt-3 border-t border-[var(--surface-muted)] pt-3">
                 <Detail label="Notes" value={driver.notes} />
               </div>
             )}
 
-            <div className="mt-5 border-t border-[#F5EEE0] pt-4">
-              <h3 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+            <div className="mt-5 border-t border-[var(--surface-muted)] pt-4">
+              <h3 className="mb-2.5 text-[length:var(--text-4)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                 Assignment history
               </h3>
               {(assignmentHistory?.items.length ?? 0) === 0 ? (
-                <p className="text-xs text-[#8B9AA3]">No assignments yet.</p>
+                <p className="text-xs text-[var(--text-muted)]">No assignments yet.</p>
               ) : (
                 <div className="flex flex-col gap-2">
                   {assignmentHistory?.items.map((a) => (
                     <div
                       key={a.id}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-[#F5EEE0] px-3 py-2"
+                      className="flex items-center justify-between gap-2 rounded-lg border border-[var(--surface-muted)] px-3 py-2"
                     >
                       <div className="min-w-0">
-                        <div className="truncate text-[12px] font-semibold text-[#0F2A38]">
+                        <div className="truncate text-[length:var(--text-6)] font-semibold text-[var(--text-strong)]">
                           {a.shipName} · {a.destination}
                         </div>
-                        <div className="text-[10.5px] text-[#8B9AA3]">
+                        <div className="text-[length:var(--text-3)] text-[var(--text-muted)]">
                           Invited {formatDateTime(a.invitedAt)}
                         </div>
                       </div>
                       <span
-                        className="flex-shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
+                        className="flex-shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[length:var(--text-3)] font-semibold"
                         style={{
                           background: ASSIGNMENT_STATUS_STYLE[a.status].bg,
                           color: ASSIGNMENT_STATUS_STYLE[a.status].color,
@@ -239,13 +239,13 @@ export function DriverDetailDrawer({
               <button
                 onClick={handleDelete}
                 disabled={deleteDriver.isPending}
-                className="rounded-full border border-[#F0C4B8] px-4 py-2 text-[12px] font-semibold text-[#C1503B] disabled:opacity-50"
+                className="rounded-full border border-[var(--danger-bg-strong)] px-4 py-2 text-[length:var(--text-6)] font-semibold text-[var(--danger)] disabled:opacity-50"
               >
                 Delete driver
               </button>
               <button
                 onClick={onClose}
-                className="rounded-full bg-[#F3EDDD] px-4 py-2 text-[12.5px] font-semibold text-[#0F2A38]"
+                className="rounded-full bg-[var(--surface-card-alt)] px-4 py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]"
               >
                 Close
               </button>
@@ -255,8 +255,8 @@ export function DriverDetailDrawer({
 
         {driver && editing && editForm && (
           <>
-            <div className="text-lg font-bold text-[#0F2A38]">Edit driver</div>
-            {error && <p className="mt-3 text-xs text-[#C1503B]">{error}</p>}
+            <div className="text-lg font-bold text-[var(--text-strong)]">Edit driver</div>
+            {error && <p className="mt-3 text-xs text-[var(--danger)]">{error}</p>}
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <EditField
                 label="Full name"
@@ -310,13 +310,13 @@ export function DriverDetailDrawer({
               />
             </div>
             <div className="mt-3">
-              <div className="mb-1.5 text-[10.5px] text-[#8B9AA3]">Notes</div>
+              <div className="mb-1.5 text-[length:var(--text-3)] text-[var(--text-muted)]">Notes</div>
               <textarea
                 value={editForm.notes}
                 onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
                 rows={3}
                 placeholder="General remarks about this driver"
-                className="w-full rounded-lg border border-[#ECE1CC] px-3 py-2 text-[12.5px] outline-none"
+                className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-[length:var(--text-7)] outline-none"
               />
             </div>
             <div className="mt-5 flex justify-end gap-2">
@@ -326,7 +326,7 @@ export function DriverDetailDrawer({
                   setEditForm(null);
                   setError(null);
                 }}
-                className="rounded-full bg-[#F3EDDD] px-4 py-2 text-[12.5px] font-semibold text-[#0F2A38]"
+                className="rounded-full bg-[var(--surface-card-alt)] px-4 py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]"
               >
                 Cancel
               </button>
@@ -335,7 +335,7 @@ export function DriverDetailDrawer({
                 disabled={
                   !editForm.fullName.trim() || !editForm.phone.trim() || updateDriver.isPending
                 }
-                className="rounded-full bg-[#1E7A8C] px-4 py-2 text-[12.5px] font-semibold text-white disabled:opacity-50"
+                className="rounded-full bg-[var(--accent)] px-4 py-2 text-[length:var(--text-7)] font-semibold text-white disabled:opacity-50"
               >
                 {updateDriver.isPending ? 'Saving…' : 'Save changes'}
               </button>
@@ -351,15 +351,15 @@ function DriverDrawerSkeleton() {
   return (
     <div className="animate-pulse">
       <div className="flex items-center gap-3.5">
-        <div className="h-13 w-13 flex-shrink-0 rounded-full bg-[#F0EADC]" />
+        <div className="h-13 w-13 flex-shrink-0 rounded-full bg-[var(--surface-muted-3)]" />
         <div className="flex-1">
-          <div className="h-4 w-1/2 rounded bg-[#F0EADC]" />
-          <div className="mt-2 h-2.5 w-1/3 rounded bg-[#F5F0E6]" />
+          <div className="h-4 w-1/2 rounded bg-[var(--surface-muted-3)]" />
+          <div className="mt-2 h-2.5 w-1/3 rounded bg-[var(--surface-muted-2)]" />
         </div>
       </div>
       <div className="mt-5.5 grid grid-cols-2 gap-3">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="h-8 rounded bg-[#F5F0E6]" />
+          <div key={i} className="h-8 rounded bg-[var(--surface-muted-2)]" />
         ))}
       </div>
     </div>
@@ -369,8 +369,8 @@ function DriverDrawerSkeleton() {
 function Detail({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <div className="text-[10.5px] uppercase tracking-wide text-[#8B9AA3]">{label}</div>
-      <div className={`mt-0.5 text-[12.5px] text-[#0F2A38] ${mono ? 'font-mono' : ''}`}>
+      <div className="text-[length:var(--text-3)] uppercase tracking-wide text-[var(--text-muted)]">{label}</div>
+      <div className={`mt-0.5 text-[length:var(--text-7)] text-[var(--text-strong)] ${mono ? 'font-mono' : ''}`}>
         {value}
       </div>
     </div>
@@ -388,11 +388,11 @@ function EditField({
 }) {
   return (
     <div>
-      <div className="mb-1.5 text-[10.5px] text-[#8B9AA3]">{label}</div>
+      <div className="mb-1.5 text-[length:var(--text-3)] text-[var(--text-muted)]">{label}</div>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-[#ECE1CC] px-3 py-2 text-[12.5px] outline-none"
+        className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-[length:var(--text-7)] outline-none"
       />
     </div>
   );

@@ -14,6 +14,10 @@ import {
   createOrganizationsService,
   type OrganizationsService,
 } from '../modules/organizations/organizations.service';
+import {
+  createPreferencesService,
+  type PreferencesService,
+} from '../modules/preferences/preferences.service';
 import { createShipsService, type ShipsService } from '../modules/ships/ships.service';
 import { createVoiceService, type VoiceService } from '../modules/voice/voice.service';
 import {
@@ -65,6 +69,7 @@ export interface Container {
   voiceService: VoiceService;
   yellowZoneService: YellowZoneService;
   notificationService: NotificationService;
+  preferencesService: PreferencesService;
   emitToOrganization: EmitToOrganization;
   emitToUser: EmitToUser;
 }
@@ -122,6 +127,7 @@ export function createContainer(): Container {
 
   const yellowZoneService = createYellowZoneService({ prisma, auditLogger, emitToOrganization });
   const notificationService = createNotificationService({ prisma, emitToUser });
+  const preferencesService = createPreferencesService({ prisma });
 
   const voiceService = createVoiceService({
     prisma,
@@ -147,6 +153,7 @@ export function createContainer(): Container {
     voiceService,
     yellowZoneService,
     notificationService,
+    preferencesService,
     emitToOrganization,
     emitToUser,
   };

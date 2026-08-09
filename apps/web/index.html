@@ -4,6 +4,45 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Kinvo</title>
+    <!--
+      Flash-of-wrong-theme avoidance: a plain, synchronous (non-module,
+      non-deferred) script, so it runs and finishes before the browser
+      paints anything — well before React mounts or the CSS module import
+      in main.tsx resolves. It only ever reads localStorage (the
+      SettingsProvider — apps/web/src/lib/SettingsProvider.tsx — is what
+      keeps this cache in sync with the backend after login); a signed-out
+      visitor or a first-ever visit falls through to the exact same
+      defaults index.css itself defaults to, so there is never a "wrong"
+      state to flash, only "not yet personalized."
+    -->
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem('kinvo:appearance');
+          var stored = raw ? JSON.parse(raw) : {};
+          var theme = stored.theme || 'SYSTEM';
+          if (theme === 'SYSTEM') {
+            theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'DARK' : 'LIGHT';
+          }
+          var root = document.documentElement;
+          root.setAttribute('data-theme', theme);
+          root.setAttribute('data-accent', stored.accent || 'OCEAN');
+          root.setAttribute('data-font-family', stored.fontFamily || 'SYSTEM');
+          root.setAttribute('data-font-size', stored.fontSize || 'DEFAULT');
+          root.setAttribute('data-density', stored.density || 'COMFORTABLE');
+          if (
+            stored.reducedMotion === true ||
+            window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ) {
+            root.setAttribute('data-reduced-motion', 'true');
+          }
+        } catch (e) {
+          // localStorage can throw (private browsing, disabled storage) —
+          // fall through to index.css's own unattributed defaults, never
+          // block the page load over a cosmetic preference.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

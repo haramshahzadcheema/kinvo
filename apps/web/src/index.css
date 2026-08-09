@@ -1,5 +1,275 @@
 @import 'tailwindcss';
 
+/* ===========================================================================
+   Kinvo design tokens (Settings — Appearance)
+   ===========================================================================
+   Every color a component needs is one of these CSS custom properties, never
+   a literal hex — that's what lets a [data-theme]/[data-accent] change on
+   <html> repaint the whole app instantly, with no React re-render and no
+   per-component logic. The exact LIGHT values below are the app's original,
+   pre-Settings palette, copied verbatim (not redesigned) — an existing user
+   who never opens Settings sees pixel-identical output to before this file
+   existed.
+
+   Status colors (--danger/--warning/--success/--info) are a SEPARATE token
+   family from --accent-*. They vary by theme (a light-mode red and a
+   dark-mode red are different literal RGB values for contrast, same as
+   every other surface here) but never by accent choice — switching from
+   Ocean to Slate must never touch what "danger" looks like. See the
+   [data-accent] blocks below: none of them redefine --danger/--warning/
+   --success/--info.
+   ========================================================================= */
+
+:root,
+[data-theme='LIGHT'] {
+  --surface-page-1: #fbf6ee;
+  --surface-page-2: #f6efe1;
+  --surface-page-3: #efe6d2;
+  --surface-card: #ffffff;
+  --surface-card-alt: #f3eddd;
+  --surface-muted: #f5eee0;
+  --surface-muted-2: #f5f0e6;
+  --surface-muted-3: #f0eadc;
+  --surface-neutral-chip: #f1f1ee;
+  --surface-overlay: rgba(15, 42, 56, 0.4);
+
+  --border: #ece1cc;
+  --border-strong: #d8c9a8;
+
+  --text-strong: #0f2a38;
+  --text-secondary: #5c6b75;
+  --text-muted: #8b9aa3;
+  --text-on-accent: #ffffff;
+
+  --danger: #c1503b;
+  --danger-bg: #fbe6e1;
+  --danger-bg-strong: #f0c4b8;
+  --warning: #b4762a;
+  --warning-bg: #fdefd9;
+  --success: #3d8a4e;
+  --info: #2a5da6;
+}
+
+[data-theme='DARK'] {
+  --surface-page-1: #0b1b24;
+  --surface-page-2: #0e212b;
+  --surface-page-3: #112631;
+  --surface-card: #132a36;
+  --surface-card-alt: #1b3542;
+  --surface-muted: #17303c;
+  --surface-muted-2: #16303b;
+  --surface-muted-3: #15303a;
+  --surface-neutral-chip: #1c3542;
+  --surface-overlay: rgba(3, 10, 14, 0.6);
+
+  --border: #234152;
+  --border-strong: #2f5468;
+
+  --text-strong: #f1f6f7;
+  --text-secondary: #b9cbd2;
+  --text-muted: #85a0ac;
+  --text-on-accent: #ffffff;
+
+  --danger: #e37a63;
+  --danger-bg: #3b211d;
+  --danger-bg-strong: #4a2a24;
+  --warning: #e0a855;
+  --warning-bg: #3a2c15;
+  --success: #6fc17f;
+  --info: #6c9fe0;
+}
+
+/* Accent — the one thing every one of these blocks is allowed to touch.
+   --accent (solid fills, active nav, focus rings), --accent-hover (button
+   hover/press), --accent-tint (light selected/badge backgrounds, paired
+   with --accent as its own text color). Ocean's values ARE the app's
+   original teal, unchanged — the default accent looks identical to the
+   pre-Settings app in both light and dark mode. */
+:root,
+[data-accent='OCEAN'] {
+  --accent: #1e7a8c;
+  --accent-hover: #175f6e;
+  --accent-tint: #eaf3f1;
+}
+[data-accent='DEEP_BLUE'] {
+  --accent: #1d4e89;
+  --accent-hover: #163c6b;
+  --accent-tint: #e3ebf5;
+}
+[data-accent='ELECTRIC_BLUE'] {
+  --accent: #1f6feb;
+  --accent-hover: #1857bd;
+  --accent-tint: #e4eefd;
+}
+[data-accent='TEAL'] {
+  --accent: #0f9b8e;
+  --accent-hover: #0c7a70;
+  --accent-tint: #dff3f0;
+}
+[data-accent='SLATE'] {
+  --accent: #4a5a6a;
+  --accent-hover: #3a4756;
+  --accent-tint: #e7eaed;
+}
+[data-theme='DARK'][data-accent='OCEAN'] {
+  --accent-tint: #163a3c;
+}
+[data-theme='DARK'][data-accent='DEEP_BLUE'] {
+  --accent-tint: #16283f;
+}
+[data-theme='DARK'][data-accent='ELECTRIC_BLUE'] {
+  --accent-tint: #142a4a;
+}
+[data-theme='DARK'][data-accent='TEAL'] {
+  --accent-tint: #113531;
+}
+[data-theme='DARK'][data-accent='SLATE'] {
+  --accent-tint: #26313c;
+}
+
+/* ===========================================================================
+   Typography scale
+   ===========================================================================
+   Ten tokens, one per distinct font-size literally in use across the app
+   today (there were exactly 10 before this file existed — 9px through
+   15px). DEFAULT's values are those originals verbatim; small/large/
+   extraLarge are hand-tuned steps, not a blind multiplier, so nothing
+   drops below a legible floor or blows past a size that would break a
+   dense operational table. A component opts in by using
+   `text-[length:var(--text-N)]` instead of a literal `text-[Npx]` — see
+   the retrofit across features/*.tsx.
+   ========================================================================= */
+:root,
+[data-font-size='DEFAULT'] {
+  --text-1: 9px;
+  --text-2: 10px;
+  --text-3: 10.5px;
+  --text-4: 11px;
+  --text-5: 11.5px;
+  --text-6: 12px;
+  --text-7: 12.5px;
+  --text-8: 13px;
+  --text-9: 13.5px;
+  --text-10: 15px;
+}
+[data-font-size='SMALL'] {
+  --text-1: 8px;
+  --text-2: 9px;
+  --text-3: 9.5px;
+  --text-4: 10px;
+  --text-5: 10.5px;
+  --text-6: 11px;
+  --text-7: 11.5px;
+  --text-8: 12px;
+  --text-9: 12.5px;
+  --text-10: 13.5px;
+}
+[data-font-size='LARGE'] {
+  --text-1: 10.5px;
+  --text-2: 11.5px;
+  --text-3: 12px;
+  --text-4: 12.5px;
+  --text-5: 13px;
+  --text-6: 14px;
+  --text-7: 14.5px;
+  --text-8: 15px;
+  --text-9: 15.5px;
+  --text-10: 17px;
+}
+[data-font-size='EXTRA_LARGE'] {
+  --text-1: 12px;
+  --text-2: 13px;
+  --text-3: 13.5px;
+  --text-4: 14px;
+  --text-5: 15px;
+  --text-6: 16px;
+  --text-7: 16.5px;
+  --text-8: 17px;
+  --text-9: 17.5px;
+  --text-10: 19px;
+}
+
+/* ===========================================================================
+   Density
+   ===========================================================================
+   Tailwind v4 compiles every non-arbitrary spacing utility (p-4, gap-2,
+   mt-3, ...) to `calc(var(--spacing) * N)` — a single theme variable the
+   whole framework already routes through. Every spacing utility in this
+   codebase (627 occurrences, checked before writing this) uses that
+   standard scale, not arbitrary bracket values, so overriding --spacing
+   here reaches every card, table row, button, form field, and nav item
+   in the app with no per-component retrofit. Comfortable's value (0.25rem)
+   is Tailwind's own unmodified default; density is invisible until a user
+   actually picks Compact or Spacious.
+   ========================================================================= */
+:root,
+[data-density='COMFORTABLE'] {
+  --spacing: 0.25rem;
+}
+[data-density='COMPACT'] {
+  --spacing: 0.2rem;
+}
+[data-density='SPACIOUS'] {
+  --spacing: 0.3125rem;
+}
+
+/* ===========================================================================
+   Font family
+   ===========================================================================
+   SYSTEM matches Tailwind's own default sans stack exactly — the font the
+   app has always rendered with, since it has never loaded a custom font
+   before this file existed. The other three are declared in main.tsx via
+   @fontsource (self-hosted, bundled at build time — never a remote URL).
+   ========================================================================= */
+:root,
+[data-font-family='SYSTEM'] {
+  --font-family:
+    ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+}
+[data-font-family='INTER'] {
+  --font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+[data-font-family='PLUS_JAKARTA_SANS'] {
+  --font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+}
+[data-font-family='DM_SANS'] {
+  --font-family: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  font-family: var(--font-family);
+}
+
+/* ===========================================================================
+   Reduced motion
+   ===========================================================================
+   Two independent triggers, both honored: the OS-level media query (a user
+   who never touched Settings but has this set system-wide) and the
+   explicit in-app toggle (persisted, so it doesn't depend on the OS
+   setting being readable/set on every device the user signs in from).
+   CSS-level, not a per-component `if (reducedMotion)` check — every
+   existing `transition`/`animate-[...]` in the app is covered by
+   construction, including ones added after this file was written.
+   ========================================================================= */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+[data-reduced-motion='true'] *,
+[data-reduced-motion='true'] *::before,
+[data-reduced-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
 @keyframes tideIn {
   from {
     opacity: 0;
@@ -24,10 +294,12 @@
    border style but never supplied a replacement focus indicator — a
    keyboard-only user tabbing through a form got zero visual feedback on
    which field was focused. One global rule fixes it everywhere at once
-   instead of repeating a focus class on every input occurrence. */
+   instead of repeating a focus class on every input occurrence. Uses the
+   accent token, not a fixed hex — a focus ring is exactly the kind of
+   "interactive control" Settings' accent customization is meant to reach. */
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid #1e7a8c;
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }

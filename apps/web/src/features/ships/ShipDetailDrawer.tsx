@@ -146,11 +146,11 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-20 flex items-center justify-center bg-[rgba(15,42,56,0.4)] sm:p-4"
+      className="fixed inset-0 z-20 flex items-center justify-center bg-[var(--surface-overlay)] sm:p-4"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="h-full w-full overflow-y-auto bg-white p-6 sm:h-auto sm:max-h-[88vh] sm:w-[600px] sm:rounded-2xl sm:p-7"
+        className="h-full w-full overflow-y-auto bg-[var(--surface-card)] p-6 sm:h-auto sm:max-h-[88vh] sm:w-[600px] sm:rounded-2xl sm:p-7"
       >
         {isLoading && <DrawerSkeleton />}
 
@@ -158,14 +158,14 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
           <>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-lg font-bold text-[#0F2A38]">{ship.shipName}</div>
-                <div className="mt-0.5 text-xs text-[#8B9AA3]">
+                <div className="text-lg font-bold text-[var(--text-strong)]">{ship.shipName}</div>
+                <div className="mt-0.5 text-xs text-[var(--text-muted)]">
                   {ship.company ?? 'No company set'}
                 </div>
               </div>
               <div className="flex flex-shrink-0 items-center gap-2">
                 <span
-                  className="whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                  className="whitespace-nowrap rounded-full px-2.5 py-1 text-[length:var(--text-4)] font-semibold"
                   style={{
                     background: SHIP_STATUS_STYLE[ship.status].bg,
                     color: SHIP_STATUS_STYLE[ship.status].color,
@@ -175,14 +175,14 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
                 </span>
                 <button
                   onClick={startEditing}
-                  className="text-[11.5px] font-semibold text-[#1E7A8C] hover:text-[#175F6E]"
+                  className="text-[length:var(--text-5)] font-semibold text-[var(--accent)] hover:text-[var(--accent-hover)]"
                 >
                   Edit
                 </button>
               </div>
             </div>
 
-            {error && <p className="mt-3 text-xs text-[#C1503B]">{error}</p>}
+            {error && <p className="mt-3 text-xs text-[var(--danger)]">{error}</p>}
 
             <div className="mt-4 flex flex-wrap gap-2">
               {SHIP_NEXT_STATUSES[ship.status].map((next) => (
@@ -190,15 +190,15 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
                   key={next}
                   onClick={() => handleStatusChange(next)}
                   disabled={updateShipStatus.isPending}
-                  className="rounded-full border border-[#ECE1CC] px-3 py-1.5 text-[11.5px] font-semibold text-[#1E7A8C] hover:bg-[#FBF6EE] disabled:opacity-50"
+                  className="rounded-full border border-[var(--border)] px-3 py-1.5 text-[length:var(--text-5)] font-semibold text-[var(--accent)] hover:bg-[var(--surface-page-1)] disabled:opacity-50"
                 >
                   Move to {SHIP_STATUS_LABEL[next]}
                 </button>
               ))}
             </div>
 
-            <div className="mt-5 rounded-xl border border-[#F5EEE0] bg-[#FBF6EE] p-4">
-              <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+            <div className="mt-5 rounded-xl border border-[var(--surface-muted)] bg-[var(--surface-page-1)] p-4">
+              <h3 className="mb-3 text-[length:var(--text-4)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                 Ship details
               </h3>
               <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
@@ -209,23 +209,23 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
                 <InfoField label="Reporting time" value={formatDateTime(ship.reportingTime)} />
               </div>
               {ship.notes && (
-                <div className="mt-3 border-t border-[#F0EADC] pt-3">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+                <div className="mt-3 border-t border-[var(--surface-muted-3)] pt-3">
+                  <div className="text-[length:var(--text-2)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                     Notes
                   </div>
-                  <div className="mt-0.5 text-[12.5px] text-[#0F2A38]">{ship.notes}</div>
+                  <div className="mt-0.5 text-[length:var(--text-7)] text-[var(--text-strong)]">{ship.notes}</div>
                 </div>
               )}
             </div>
 
             <section className="mt-6">
               <div className="mb-2.5 flex items-center justify-between">
-                <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+                <h3 className="text-[length:var(--text-4)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                   Destinations
                 </h3>
                 <button
                   onClick={() => setShowAddDestination((v) => !v)}
-                  className="text-[11.5px] font-semibold text-[#1E7A8C]"
+                  className="text-[length:var(--text-5)] font-semibold text-[var(--accent)]"
                 >
                   {showAddDestination ? 'Cancel' : '+ Add destination'}
                 </button>
@@ -233,13 +233,13 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
 
               <div className="flex flex-col gap-2.5">
                 {ship.truckRequirements.map((req) => (
-                  <div key={req.id} className="rounded-xl border border-[#ECE1CC] bg-white p-3.5">
+                  <div key={req.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface-card)] p-3.5">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <div className="text-[13.5px] font-bold text-[#0F2A38]">
+                        <div className="text-[length:var(--text-9)] font-bold text-[var(--text-strong)]">
                           {req.destination}
                         </div>
-                        <div className="mt-0.5 text-xs text-[#8B9AA3]">
+                        <div className="mt-0.5 text-xs text-[var(--text-muted)]">
                           {req.truckType} · {req.quantityNeeded} truck
                           {req.quantityNeeded === 1 ? '' : 's'}
                         </div>
@@ -248,19 +248,19 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
                         onClick={() =>
                           removeTruckRequirement.mutate({ shipId, truckRequirementId: req.id })
                         }
-                        className="flex-shrink-0 text-sm text-[#C1503B]"
+                        className="flex-shrink-0 text-sm text-[var(--danger)]"
                         aria-label="Remove truck requirement"
                       >
                         ×
                       </button>
                     </div>
                     <div className="mt-2.5 flex items-center justify-between">
-                      <span className="text-[13px] font-semibold text-[#1E7A8C]">
+                      <span className="text-[length:var(--text-8)] font-semibold text-[var(--accent)]">
                         {formatRate(req.rate, req.rateCurrency)}
                       </span>
                     </div>
                     {req.notes && (
-                      <div className="mt-2 rounded-lg bg-[#FBF6EE] px-2.5 py-1.5 text-[11.5px] text-[#5C6B75]">
+                      <div className="mt-2 rounded-lg bg-[var(--surface-page-1)] px-2.5 py-1.5 text-[length:var(--text-5)] text-[var(--text-secondary)]">
                         {req.notes}
                       </div>
                     )}
@@ -273,31 +273,31 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
                   </div>
                 ))}
                 {ship.truckRequirements.length === 0 && !showAddDestination && (
-                  <p className="text-xs text-[#8B9AA3]">No destinations added yet.</p>
+                  <p className="text-xs text-[var(--text-muted)]">No destinations added yet.</p>
                 )}
               </div>
 
               {showAddDestination && (
-                <div className="mt-2.5 rounded-xl border border-[#F5EEE0] bg-[#FBF6EE] p-3.5">
+                <div className="mt-2.5 rounded-xl border border-[var(--surface-muted)] bg-[var(--surface-page-1)] p-3.5">
                   <div className="grid grid-cols-2 gap-2">
                     <input
                       value={newDestination}
                       onChange={(e) => setNewDestination(e.target.value)}
                       placeholder="Destination"
-                      className="col-span-2 rounded-lg border border-[#ECE1CC] px-2.5 py-1.5 text-[12px] outline-none"
+                      className="col-span-2 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[length:var(--text-6)] outline-none"
                     />
                     <input
                       value={newTruckType}
                       onChange={(e) => setNewTruckType(e.target.value)}
                       placeholder="Truck type"
-                      className="rounded-lg border border-[#ECE1CC] px-2.5 py-1.5 text-[12px] outline-none"
+                      className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[length:var(--text-6)] outline-none"
                     />
                     <input
                       value={newQuantity}
                       type="number"
                       min={1}
                       onChange={(e) => setNewQuantity(e.target.value)}
-                      className="rounded-lg border border-[#ECE1CC] px-2.5 py-1.5 text-[12px] outline-none"
+                      className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[length:var(--text-6)] outline-none"
                     />
                     <input
                       value={newRate}
@@ -306,18 +306,18 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
                       step="0.01"
                       onChange={(e) => setNewRate(e.target.value)}
                       placeholder="Rate (PKR)"
-                      className="rounded-lg border border-[#ECE1CC] px-2.5 py-1.5 text-[12px] outline-none"
+                      className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[length:var(--text-6)] outline-none"
                     />
                     <input
                       value={newNotes}
                       onChange={(e) => setNewNotes(e.target.value)}
                       placeholder="Notes (optional)"
-                      className="rounded-lg border border-[#ECE1CC] px-2.5 py-1.5 text-[12px] outline-none"
+                      className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[length:var(--text-6)] outline-none"
                     />
                   </div>
                   <button
                     onClick={handleAddTruckRequirement}
-                    className="mt-2.5 w-full rounded-lg bg-[#1E7A8C] px-3 py-1.5 text-[12px] font-semibold text-white"
+                    className="mt-2.5 w-full rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[length:var(--text-6)] font-semibold text-white"
                   >
                     Add destination
                   </button>
@@ -327,12 +327,12 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
 
             <section className="mt-6">
               <div className="mb-2.5 flex items-center justify-between">
-                <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+                <h3 className="text-[length:var(--text-4)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                   Document requirements
                 </h3>
                 <button
                   onClick={() => setShowAddDocument((v) => !v)}
-                  className="text-[11.5px] font-semibold text-[#1E7A8C]"
+                  className="text-[length:var(--text-5)] font-semibold text-[var(--accent)]"
                 >
                   {showAddDocument ? 'Cancel' : '+ Add document'}
                 </button>
@@ -341,14 +341,14 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
                 {ship.documentRequirements.map((req) => (
                   <div
                     key={req.id}
-                    className="flex items-center justify-between rounded-lg border border-[#F5EEE0] px-3 py-2 text-[12.5px]"
+                    className="flex items-center justify-between rounded-lg border border-[var(--surface-muted)] px-3 py-2 text-[length:var(--text-7)]"
                   >
                     <span>{req.documentType}</span>
                     <button
                       onClick={() =>
                         removeDocumentRequirement.mutate({ shipId, documentRequirementId: req.id })
                       }
-                      className="text-[#C1503B]"
+                      className="text-[var(--danger)]"
                       aria-label="Remove document requirement"
                     >
                       ×
@@ -356,7 +356,7 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
                   </div>
                 ))}
                 {ship.documentRequirements.length === 0 && !showAddDocument && (
-                  <p className="text-xs text-[#8B9AA3]">No document requirements yet.</p>
+                  <p className="text-xs text-[var(--text-muted)]">No document requirements yet.</p>
                 )}
               </div>
               {showAddDocument && (
@@ -365,11 +365,11 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
                     value={newDocumentType}
                     onChange={(e) => setNewDocumentType(e.target.value)}
                     placeholder="e.g. Port Entry Pass"
-                    className="flex-1 rounded-lg border border-[#ECE1CC] px-2.5 py-1.5 text-[12px] outline-none"
+                    className="flex-1 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[length:var(--text-6)] outline-none"
                   />
                   <button
                     onClick={handleAddDocumentRequirement}
-                    className="rounded-lg bg-[#1E7A8C] px-3 text-[12px] font-semibold text-white"
+                    className="rounded-lg bg-[var(--accent)] px-3 text-[length:var(--text-6)] font-semibold text-white"
                   >
                     Add
                   </button>
@@ -381,13 +381,13 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
               <button
                 onClick={handleDelete}
                 disabled={deleteShip.isPending}
-                className="rounded-full border border-[#F0C4B8] px-4 py-2 text-[12px] font-semibold text-[#C1503B] disabled:opacity-50"
+                className="rounded-full border border-[var(--danger-bg-strong)] px-4 py-2 text-[length:var(--text-6)] font-semibold text-[var(--danger)] disabled:opacity-50"
               >
                 Delete ship
               </button>
               <button
                 onClick={onClose}
-                className="rounded-full bg-[#F3EDDD] px-4 py-2 text-[12.5px] font-semibold text-[#0F2A38]"
+                className="rounded-full bg-[var(--surface-card-alt)] px-4 py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]"
               >
                 Close
               </button>
@@ -397,8 +397,8 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
 
         {ship && editing && editForm && (
           <>
-            <div className="text-lg font-bold text-[#0F2A38]">Edit ship details</div>
-            {error && <p className="mt-3 text-xs text-[#C1503B]">{error}</p>}
+            <div className="text-lg font-bold text-[var(--text-strong)]">Edit ship details</div>
+            {error && <p className="mt-3 text-xs text-[var(--danger)]">{error}</p>}
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <EditField
                 label="Ship name"
@@ -439,13 +439,13 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
               />
             </div>
             <div className="mt-3">
-              <div className="mb-1.5 text-[10.5px] text-[#8B9AA3]">Notes</div>
+              <div className="mb-1.5 text-[length:var(--text-3)] text-[var(--text-muted)]">Notes</div>
               <textarea
                 value={editForm.notes}
                 onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
                 rows={3}
                 placeholder="General remarks about this ship"
-                className="w-full rounded-lg border border-[#ECE1CC] px-3 py-2 text-[12.5px] outline-none"
+                className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-[length:var(--text-7)] outline-none"
               />
             </div>
             <div className="mt-5 flex justify-end gap-2">
@@ -455,14 +455,14 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
                   setEditForm(null);
                   setError(null);
                 }}
-                className="rounded-full bg-[#F3EDDD] px-4 py-2 text-[12.5px] font-semibold text-[#0F2A38]"
+                className="rounded-full bg-[var(--surface-card-alt)] px-4 py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveEdit}
                 disabled={!editForm.shipName.trim() || updateShip.isPending}
-                className="rounded-full bg-[#1E7A8C] px-4 py-2 text-[12.5px] font-semibold text-white disabled:opacity-50"
+                className="rounded-full bg-[var(--accent)] px-4 py-2 text-[length:var(--text-7)] font-semibold text-white disabled:opacity-50"
               >
                 {updateShip.isPending ? 'Saving…' : 'Save changes'}
               </button>
@@ -477,10 +477,10 @@ export function ShipDetailDrawer({ shipId, onClose }: { shipId: string; onClose:
 function InfoField({ label, value }: { label: string; value: string | null }) {
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+      <div className="text-[length:var(--text-2)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
         {label}
       </div>
-      <div className="mt-0.5 text-[12.5px] text-[#0F2A38]">{value ?? '—'}</div>
+      <div className="mt-0.5 text-[length:var(--text-7)] text-[var(--text-strong)]">{value ?? '—'}</div>
     </div>
   );
 }
@@ -498,12 +498,12 @@ function EditField({
 }) {
   return (
     <div>
-      <div className="mb-1.5 text-[10.5px] text-[#8B9AA3]">{label}</div>
+      <div className="mb-1.5 text-[length:var(--text-3)] text-[var(--text-muted)]">{label}</div>
       <input
         value={value}
         type={type}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-[#ECE1CC] px-3 py-2 text-[12.5px] outline-none"
+        className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-[length:var(--text-7)] outline-none"
       />
     </div>
   );
@@ -512,12 +512,12 @@ function EditField({
 function DrawerSkeleton() {
   return (
     <div className="animate-pulse">
-      <div className="h-4 w-1/2 rounded bg-[#F0EADC]" />
-      <div className="mt-2 h-3 w-1/3 rounded bg-[#F5F0E6]" />
-      <div className="mt-6 h-20 rounded-xl bg-[#F5F0E6]" />
-      <div className="mt-6 h-3 w-1/4 rounded bg-[#F5F0E6]" />
-      <div className="mt-3 h-16 rounded-lg bg-[#F5F0E6]" />
-      <div className="mt-3 h-16 rounded-lg bg-[#F5F0E6]" />
+      <div className="h-4 w-1/2 rounded bg-[var(--surface-muted-3)]" />
+      <div className="mt-2 h-3 w-1/3 rounded bg-[var(--surface-muted-2)]" />
+      <div className="mt-6 h-20 rounded-xl bg-[var(--surface-muted-2)]" />
+      <div className="mt-6 h-3 w-1/4 rounded bg-[var(--surface-muted-2)]" />
+      <div className="mt-3 h-16 rounded-lg bg-[var(--surface-muted-2)]" />
+      <div className="mt-3 h-16 rounded-lg bg-[var(--surface-muted-2)]" />
     </div>
   );
 }

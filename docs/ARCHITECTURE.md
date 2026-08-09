@@ -2826,3 +2826,182 @@ correctly recovered the exact prior unread state with no leakage.
 **Final state:** 277 backend tests + 36 frontend tests, all passing;
 clean typecheck/lint/build across all three workspaces; Phases 0–5
 unchanged in behavior throughout.
+
+## Settings — appearance, notifications, account
+
+A personal-preferences system (theme, accent, typography, density,
+motion, two notification toggles) plus a read-only Account/Organization
+view. Explicitly scoped to what the user actually asked for — not the
+roadmap's own "Phase 6 — Reminder Campaigns & Notifications" milestone
+(§Milestones), whose `ReminderCampaign`/approval-gate/campaign-queue half
+remains entirely unbuilt and is not part of this work.
+
+**Ownership model: User, never Organization or Membership.** A user who
+belongs to two organizations must see the same theme in both — appearance
+is "how does Kinvo look to me," a property of the person, not the tenant.
+This is the same User-as-single-platform-identity boundary Phase 1
+already established for auth (`User.email` is globally unique;
+organization access is granted via `Membership`, never conflated with
+identity) — `UserPreferences` just extends that existing boundary to
+appearance rather than drawing a new one. `UserPreferences.userId` is
+unique (one row per user, ever), and the model is deliberately **not** in
+`core/prisma.ts`'s `TENANT_SCOPED_MODELS` — it has no `organizationId`
+column at all, the same reasoning `TruckRequirement`/`DocumentRequirement`
+already established (injecting one would be a Prisma validation error,
+not a usable scope). Isolation is entirely `userId: context.userId` in
+the service layer, the only dimension this model has.
+
+**RBAC is ownership-based, not role-based** — `preferences.routes.ts` has
+no `authorize()` call, matching `notification.routes.ts`'s exact
+precedent: "is this MY settings" is a materially different question from
+"can this role manage a shared resource," and every authenticated member,
+any role, can read/update their own preferences.
+
+**Persistence, precisely:**
+
+| Data | Where | Why |
+|---|---|---|
+| theme, accent, fontFamily, fontSize, density, reducedMotion, yellowZoneEscalationNotifications, notificationSound | **Database** (`user_preferences` table, structured enum/boolean columns, not JSON) | Durable, cross-device source of truth. Every field is a small closed set — a JSON blob would trade DB-level validation for no real flexibility, since nothing here is ever free text. |
+| The same six appearance fields, as one JSON blob | **localStorage** (`kinvo:appearance`) | *Not* the source of truth — a synchronous read-before-paint cache only `index.html`'s inline bootstrap script and `lib/appearance.ts` touch, so theme/font/etc. can be applied before React mounts (flash-of-wrong-theme avoidance) and optimistically during a mutation. Always overwritten with the real fetched value once it arrives (`SettingsProvider`'s reconciliation effect) — a stale cache from a previous account on the same browser self-corrects on next login, it never overrides a genuine server value. |
+| `data-theme`/`data-accent`/`data-font-family`/`data-font-size`/`data-density`/`data-reduced-motion` on `<html>` | **Runtime-only** | The actual mechanism index.css's entire token system keys off. Rebuilt from either the localStorage cache (pre-mount) or the fetched `Settings` object (post-mount) — never itself a source of truth, always derived. |
+
+**Theme architecture — CSS custom properties, not a second component
+library or a runtime CSS-in-JS system.** Before this feature, every
+color in the app was a literal Tailwind arbitrary hex value
+(`bg-[#1E7A8C]`) repeated across ~500 occurrences in 13 files, using a
+palette of only ~15 distinct colors. `index.css` now defines that exact
+palette as CSS custom properties (`--accent`, `--text-strong`, `--danger`,
+...) under `[data-theme]`/`[data-accent]` selectors, and every one of
+those ~500 occurrences was mechanically retrofitted to
+`bg-[var(--accent)]`-style arbitrary-value references — a find-and-replace
+across a small, consistent palette, not a rewrite. `AuthScreen.tsx` is the
+one deliberate exception: the pre-login screen has its own fixed teal
+brand gradient, untouched, since accent is a per-user preference that
+doesn't exist yet for someone who hasn't logged in.
+
+Status colors (`--danger`/`--warning`/`--success`/`--info`) are a
+**separate token family** from `--accent-*` — they vary by theme (a
+light-mode red and a dark-mode red are different literal RGB values for
+contrast) but *never* by accent choice; none of the five `[data-accent]`
+blocks redefine them. Switching from Ocean to Slate recolors buttons and
+active navigation; it never recolors an error state.
+
+**Density reaches the whole app for near-zero cost.** Tailwind v4
+compiles every non-arbitrary spacing utility (`p-4`, `gap-2`, `mt-3`, ...)
+to `calc(var(--spacing) * N)` — a single framework-level variable every
+one of this codebase's 627 spacing-utility occurrences already routes
+through (checked before relying on this, not assumed). Overriding
+`--spacing` per `[data-density]` reaches every card, table row, and form
+field with zero per-component retrofit.
+
+**Typography scale, honestly scoped.** Ten CSS variables
+(`--text-1`...`--text-10`), one per distinct font-size literally in use
+across the app before this feature existed (9px–15px). Components opt in
+via `text-[length:var(--text-N)]` instead of a literal `text-[Npx]` — the
+same mechanical retrofit as the color palette, applied everywhere a
+`text-[Npx]` class existed. `fontSize` is a discrete four-step setting
+(Small/Default/Large/Extra Large) with hand-tuned values per step, not a
+proportional multiplier — chosen deliberately so nothing drops below a
+legible floor or breaks a dense table's layout at the largest step.
+
+**Font family: three self-hosted fonts via `@fontsource`, one system
+default.** No remote stylesheet or Google Fonts URL is ever loaded —
+Inter/Plus Jakarta Sans/DM Sans are npm packages bundling the actual
+WOFF2 files, imported once in `main.tsx`. `SYSTEM` (the default) resolves
+to Tailwind's own default sans stack — the font the app has always
+rendered with, since it never loaded a custom font before this feature;
+an existing user who never opens Settings sees no font change.
+
+**Flash-of-wrong-theme avoidance.** `index.html` contains one small,
+synchronous (non-module) inline `<script>` that reads the localStorage
+cache and sets the `data-*` attributes on `<html>` before the browser
+paints anything — well before React mounts or `main.tsx`'s CSS import
+resolves. A signed-out visitor or a first-ever visit falls through to
+the same defaults `index.css` itself defaults to, so there is never a
+"wrong" state to flash, only "not yet personalized."
+
+**Optimistic appearance, honestly reverted on failure.**
+`useUpdateSettings` (`features/settings/useSettings.ts`) applies
+theme/accent/font/fontSize/density/reducedMotion changes to the DOM and
+the localStorage cache the instant `mutate` is called — before the
+network round trip even starts — via TanStack Query's standard
+`onMutate`/`onError` optimistic-update recipe, not a second state
+system. On failure, both the query cache and the DOM/localStorage revert
+to the last confirmed-good `Settings`, and the UI shows a real,
+visible error message (`AppearanceSection`'s inline banner) — never a
+silent revert the user has no way to notice.
+`yellowZoneEscalationNotifications`/`notificationSound` are **not**
+specially optimistic — they have no DOM effect to apply early, so they
+get the same "reflect in the query cache immediately, reconcile with the
+server after" treatment every other mutation in this codebase already
+has.
+
+**Notification preference architecture — deliberately two toggles, not
+three.** The directive's own example list included "realtime notification
+updates" as a third, separate toggle; it was not built. Reasoning: the
+only thing such a toggle could safely gate — without either faking it or
+degrading the actual Phase 6 notification pipeline (the unread badge and
+inbox list itself, which the directive's own priorities explicitly
+protect: "never compromise operational realtime functionality") — is
+presentation-layer sound, which `notificationSound` already covers.
+Gating the badge/list's own live-invalidation behind a preference would
+make the core Phase 6 feature simply not work when the toggle is off,
+which is a materially worse outcome than not building the toggle at all.
+
+Of the two toggles that *were* built, only one has real backend teeth —
+`yellowZoneEscalationNotifications` is checked in
+`voice.service.ts`'s recipient-targeting query
+(`logSystemErrorWithEscalation`): a recipient with an *existing* row set
+to `false` is excluded from the notification fan-out for a new
+escalation. (A user who has never opened Settings has no row yet, so the
+schema default — `true`, "notify me" — still applies; only an explicit
+opt-out removes someone, never the other way around.) `notificationSound`
+is frontend-only, since there is no backend concept of "sound" to
+enforce. Neither toggle touches the Socket.io connection itself, matching
+the directive's explicit priority: `RealtimeProvider.tsx`,
+`socketServer.ts`, and `emitter.ts` are byte-for-byte unchanged by this
+feature. The connection stays up, Yellow Zone and notification cache
+invalidation keep firing, regardless of what a user has set here.
+
+**Account and Organization sections are read-only, honestly.** This
+codebase has no name/email-change endpoint (email in particular would
+need a real verification flow it doesn't have) and no organization
+rename endpoint — so neither section pretends otherwise. They display the
+real, current identity (`useAuth()`'s existing `auth` state — no new
+fetch, no new backend surface) rather than inventing editable fields with
+nothing behind them. Sign out calls the exact same `logout()` every other
+sign-out button in the app already uses.
+
+**Future extension guidance.** A second notification type will need real
+per-`targetType` deep-link routing in `NotificationsPage.tsx`'s
+click-handler (today it always navigates to the Yellow Zone tab,
+correct only because every current notification targets one) —
+design for that the moment a second type exists, not before. The
+`Accent`/`FontFamily`/`FontSize`/`Density` enums are additive: a new
+value is one migration adding an enum member plus one new `[data-*]`
+block in `index.css`, never a redesign. `UserPreferences` staying a
+single flat row (not a JSON blob, not a history table) holds only as
+long as every field remains "one current value, no history" — a feature
+like "schedule dark mode for after sunset" would need real new columns,
+not a reinterpretation of the existing ones.
+
+**Live verification performed:** theme (light/dark/system, including
+confirming `SYSTEM` genuinely resolves via `matchMedia`), accent, font
+family (confirmed via `getComputedStyle`, not just the `data-*`
+attribute), font size, density, and reduced motion (confirmed via
+`getComputedStyle`'s computed `transitionDuration`, not just the
+attribute) were all exercised against the real running stack and found
+to genuinely change the rendered app — not just update state. Persistence
+was verified across a hard browser reload (server-fetched values matched
+what had been set, correctly reconciling over the FOUC-avoidance cache).
+Yellow Zone, Notifications, and Dashboard were all confirmed to render
+correctly in dark mode with the chosen accent, including status colors
+staying stable across accent changes. The realtime connection was
+confirmed to stay live (no "Reconnecting…" state) with Settings actively
+in use. Both desktop (sidebar + content) and mobile (section list →
+content, with a back control) layouts were exercised, including the
+Appearance section's live preview panel on both. Cross-account isolation,
+opt-out recipient exclusion, and concurrent-update semantics were proven
+by the automated backend suite (real Postgres, not mocked) rather than
+re-proven live, since those are exactly what that suite already exists to
+guarantee.

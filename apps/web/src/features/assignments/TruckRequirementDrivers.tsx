@@ -33,17 +33,17 @@ export function TruckRequirementDrivers({
     <div className="mt-2.5">
       <button
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 rounded-lg bg-[#FBF6EE] px-2.5 py-1.5 text-left"
+        className="flex w-full items-center justify-between gap-2 rounded-lg bg-[var(--surface-page-1)] px-2.5 py-1.5 text-left"
       >
-        <span className="text-[11.5px] font-semibold text-[#0F2A38]">
+        <span className="text-[length:var(--text-5)] font-semibold text-[var(--text-strong)]">
           {confirmedCount}/{quantityNeeded} confirmed
           {pendingCount > 0 && (
-            <span className="ml-1.5 font-normal text-[#B4762A]">
+            <span className="ml-1.5 font-normal text-[var(--warning)]">
               · {pendingCount} pending outreach
             </span>
           )}
         </span>
-        <span className="flex-shrink-0 text-[11px] font-semibold text-[#1E7A8C]">
+        <span className="flex-shrink-0 text-[length:var(--text-4)] font-semibold text-[var(--accent)]">
           {expanded ? 'Hide drivers' : 'Manage drivers'}
         </span>
       </button>
@@ -77,12 +77,12 @@ function AssignmentsPanel({ truckRequirementId }: { truckRequirementId: string }
   const error = actions.error ?? inviteError;
 
   return (
-    <div className="mt-2 rounded-xl border border-[#F5EEE0] bg-white p-3">
-      {error && <p className="mb-2 text-[11px] text-[#C1503B]">{error}</p>}
+    <div className="mt-2 rounded-xl border border-[var(--surface-muted)] bg-[var(--surface-card)] p-3">
+      {error && <p className="mb-2 text-[length:var(--text-4)] text-[var(--danger)]">{error}</p>}
 
-      {isLoading && <p className="text-[11.5px] text-[#8B9AA3]">Loading drivers…</p>}
+      {isLoading && <p className="text-[length:var(--text-5)] text-[var(--text-muted)]">Loading drivers…</p>}
       {!isLoading && assignments.length === 0 && (
-        <p className="text-[11.5px] text-[#8B9AA3]">No drivers invited yet.</p>
+        <p className="text-[length:var(--text-5)] text-[var(--text-muted)]">No drivers invited yet.</p>
       )}
 
       <div className="flex flex-col gap-2">
@@ -111,10 +111,10 @@ function AssignmentsPanel({ truckRequirementId }: { truckRequirementId: string }
         ))}
       </div>
 
-      <div className="mt-3 border-t border-[#F5EEE0] pt-3">
+      <div className="mt-3 border-t border-[var(--surface-muted)] pt-3">
         <button
           onClick={() => setShowInvite((v) => !v)}
-          className="text-[11.5px] font-semibold text-[#1E7A8C]"
+          className="text-[length:var(--text-5)] font-semibold text-[var(--accent)]"
         >
           {showInvite ? 'Cancel' : '+ Invite driver'}
         </button>
@@ -156,14 +156,14 @@ function DriverPicker({
   const drivers = (data?.items ?? []).filter((driver) => !excludeDriverIds.has(driver.id));
 
   return (
-    <div className="mt-2.5 rounded-lg border border-[#ECE1CC] bg-[#FBF6EE] p-2.5">
+    <div className="mt-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface-page-1)] p-2.5">
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder="Search drivers by name or phone"
-        className="w-full rounded-lg border border-[#ECE1CC] bg-white px-2.5 py-1.5 text-[12px] outline-none"
+        className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface-card)] px-2.5 py-1.5 text-[length:var(--text-6)] outline-none"
       />
-      <label className="mt-2 flex items-center gap-1.5 text-[11px] text-[#5C6B75]">
+      <label className="mt-2 flex items-center gap-1.5 text-[length:var(--text-4)] text-[var(--text-secondary)]">
         <input
           type="checkbox"
           checked={includeUnavailable}
@@ -173,20 +173,20 @@ function DriverPicker({
       </label>
 
       <div className="mt-2 flex max-h-52 flex-col gap-1.5 overflow-y-auto">
-        {isLoading && <p className="text-[11.5px] text-[#8B9AA3]">Loading…</p>}
+        {isLoading && <p className="text-[length:var(--text-5)] text-[var(--text-muted)]">Loading…</p>}
         {!isLoading && drivers.length === 0 && (
-          <p className="text-[11.5px] text-[#8B9AA3]">No matching drivers.</p>
+          <p className="text-[length:var(--text-5)] text-[var(--text-muted)]">No matching drivers.</p>
         )}
         {drivers.map((driver) => (
           <div
             key={driver.id}
-            className="flex items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-1.5"
+            className="flex items-center justify-between gap-2 rounded-lg bg-[var(--surface-card)] px-2.5 py-1.5"
           >
             <div className="min-w-0">
-              <div className="truncate text-[12px] font-semibold text-[#0F2A38]">
+              <div className="truncate text-[length:var(--text-6)] font-semibold text-[var(--text-strong)]">
                 {driver.fullName}
               </div>
-              <div className="flex items-center gap-1.5 text-[10.5px] text-[#8B9AA3]">
+              <div className="flex items-center gap-1.5 text-[length:var(--text-3)] text-[var(--text-muted)]">
                 <span>{driver.phone}</span>
                 <span
                   className="rounded-full px-1.5 py-0.5 font-semibold"
@@ -202,7 +202,7 @@ function DriverPicker({
             <button
               onClick={() => onInvite(driver.id)}
               disabled={isInviting}
-              className="flex-shrink-0 rounded-full bg-[#1E7A8C] px-3 py-1 text-[11px] font-semibold text-white disabled:opacity-50"
+              className="flex-shrink-0 rounded-full bg-[var(--accent)] px-3 py-1 text-[length:var(--text-4)] font-semibold text-white disabled:opacity-50"
             >
               Assign
             </button>

@@ -189,6 +189,25 @@ export type {
 } from './notification.schema';
 
 export {
+  themeSchema,
+  accentSchema,
+  fontFamilySchema,
+  fontSizeSchema,
+  densitySchema,
+  settingsSchema,
+  updateSettingsRequestSchema,
+} from './settings.schema';
+export type {
+  ThemeValue,
+  AccentValue,
+  FontFamilyValue,
+  FontSizeValue,
+  DensityValue,
+  Settings,
+  UpdateSettingsRequest,
+} from './settings.schema';
+
+export {
   YELLOW_ZONE_CREATED,
   YELLOW_ZONE_UPDATED,
   YELLOW_ZONE_RESOLVED,

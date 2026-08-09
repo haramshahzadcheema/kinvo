@@ -67,6 +67,7 @@ model User {
   recordedAttempts       AssignmentAttempt[] @relation("AssignmentAttemptRecordedBy")
   claimedYellowZoneItems YellowZoneItem[]    @relation("YellowZoneItemAssignedTo")
   notifications          Notification[]
+  preferences            UserPreferences?
 
   @@map("users")
 }
@@ -621,7 +622,7 @@ enum YellowZonePriority {
 // the same target model, which defeats the point of targetType existing
 // at all.
 model Notification {
-  id             String               @id @default(cuid())
+  id             String                 @id @default(cuid())
   organizationId String
   userId         String
   type           NotificationType
@@ -630,7 +631,7 @@ model Notification {
   targetType     NotificationTargetType
   targetId       String
   readAt         DateTime?
-  createdAt      DateTime             @default(now())
+  createdAt      DateTime               @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -665,6 +666,94 @@ enum NotificationType {
 
 enum NotificationTargetType {
   YELLOW_ZONE_ITEM
+}
+
+// Personal appearance/notification preferences — deliberately keyed on
+// User, not Organization or Membership. These are per-PERSON settings
+// ("how does Kinvo look to me"), not per-tenant ones; a user who belongs
+// to more than one organization must see the same theme/font/density in
+// both, not have one organization's session silently override another's.
+// This is the same User-as-single-platform-identity model Phase 1 already
+// established for auth (User.email is globally unique; organization
+// access is granted via Membership, never conflated with identity) — this
+// model just extends that existing boundary to appearance, not a new one.
+//
+// One row per user (userId unique, not a list) — every field here is a
+// single current value, never a history. Structured enum columns, not a
+// JSON blob: every setting here is small, closed, and product-critical
+// (exactly the "stable, product-critical" case the schema favors typed
+// columns for elsewhere — see YellowZoneItem/Notification's own enum
+// usage) — a JSON blob would trade compile-time/DB-level validation for
+// no real flexibility benefit, since every field is a fixed, curated
+// choice, never free text.
+model UserPreferences {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  theme      Theme      @default(SYSTEM)
+  accent     Accent     @default(OCEAN)
+  fontFamily FontFamily @default(SYSTEM)
+  fontSize   FontSize   @default(DEFAULT)
+  density    Density    @default(COMFORTABLE)
+
+  reducedMotion Boolean @default(false)
+
+  // The one notification preference that requires real backend
+  // enforcement to be honest, not just a frontend visual toggle — see
+  // voice.service.ts's YELLOW_ZONE_ESCALATION_RECIPIENT_ROLES filter,
+  // which now also excludes a user who has turned this off.
+  yellowZoneEscalationNotifications Boolean @default(true)
+  // Frontend-only: plays a short synthesized tone on a live
+  // notification.created socket event. Off by default — sound is an
+  // opt-in, not an ambient default for a shared-desk operational tool.
+  notificationSound                 Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+// FontFamily's default is SYSTEM, not one of the three bundled fonts —
+// the app has never loaded a custom font (Tailwind's default sans stack
+// resolves to the OS system font), so SYSTEM is what every existing user
+// is already seeing. Defaulting to INTER or similar would silently change
+// the product's look for everyone the moment this migration runs, not a
+// deliberate choice a user made.
+enum Theme {
+  SYSTEM
+  LIGHT
+  DARK
+}
+
+enum Accent {
+  OCEAN
+  DEEP_BLUE
+  ELECTRIC_BLUE
+  TEAL
+  SLATE
+}
+
+enum FontFamily {
+  SYSTEM
+  INTER
+  PLUS_JAKARTA_SANS
+  DM_SANS
+}
+
+enum FontSize {
+  SMALL
+  DEFAULT
+  LARGE
+  EXTRA_LARGE
+}
+
+enum Density {
+  COMPACT
+  COMFORTABLE
+  SPACIOUS
 }
 
 enum AssignmentStatus {

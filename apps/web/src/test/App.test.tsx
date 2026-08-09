@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '../App';
 
@@ -66,5 +66,37 @@ describe('App', () => {
     });
     expect(screen.getByRole('button', { name: 'Ships' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Drivers' })).toBeInTheDocument();
+  });
+
+  // Settings feature: a first-class, always-enabled nav destination (no
+  // "Soon" badge, unlike its stub before this feature existed) — clicking
+  // it must actually navigate, proven end to end through the real nav
+  // shell, not just by rendering <SettingsPage /> in isolation (see
+  // features/settings/SettingsPage.test.tsx for that half).
+  it('navigates to Settings from the main navigation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/auth/refresh')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => authResponse });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ items: [], page: 1, pageSize: 50, total: 0, totalPages: 1 }),
+        });
+      }),
+    );
+
+    renderWithClient();
+
+    // jsdom doesn't apply the responsive CSS that hides the mobile nav at
+    // desktop width, so both the desktop sidebar and mobile nav's
+    // "Settings" buttons are present at once — findAllByRole would throw
+    // if neither existed, so index 0 is always the desktop one.
+    const settingsButtons = await screen.findAllByRole('button', { name: 'Settings' });
+    fireEvent.click(settingsButtons[0]!);
+
+    expect(await screen.findByText('How Kinvo looks and behaves for you.')).toBeInTheDocument();
   });
 });

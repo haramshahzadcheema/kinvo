@@ -43,12 +43,12 @@ export function NotificationsPage({ onNavigate }: { onNavigate: (tab: 'yellow-zo
     <div className="animate-[tideIn_0.2s_ease]">
       <div className="mb-5 flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-lg font-bold text-[#0F2A38]">Notifications</h1>
-          <p className="mt-0.5 text-xs text-[#8B9AA3]">Things that need your awareness or action.</p>
+          <h1 className="text-lg font-bold text-[var(--text-strong)]">Notifications</h1>
+          <p className="mt-0.5 text-xs text-[var(--text-muted)]">Things that need your awareness or action.</p>
         </div>
         <div className="flex flex-shrink-0 items-center gap-2">
           {connectionStatus === 'connecting' && (
-            <span className="flex items-center gap-1.5 rounded-full bg-[#F1F1EE] px-2.5 py-1 text-[10.5px] font-semibold text-[#8B9AA3]">
+            <span className="flex items-center gap-1.5 rounded-full bg-[var(--surface-neutral-chip)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-[var(--text-muted)]">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
               Reconnecting…
             </span>
@@ -57,7 +57,7 @@ export function NotificationsPage({ onNavigate }: { onNavigate: (tab: 'yellow-zo
             <button
               onClick={() => mutations.markAllRead.mutate()}
               disabled={mutations.markAllRead.isPending}
-              className="rounded-full border border-[#ECE1CC] px-2.5 py-1 text-[11px] font-semibold text-[#5C6B75] hover:bg-[#F3EDDD] disabled:opacity-50"
+              className="rounded-full border border-[var(--border)] px-2.5 py-1 text-[length:var(--text-4)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)] disabled:opacity-50"
             >
               Mark all read
             </button>
@@ -66,12 +66,12 @@ export function NotificationsPage({ onNavigate }: { onNavigate: (tab: 'yellow-zo
       </div>
 
       {isLoading && <NotificationListSkeleton />}
-      {isError && <p className="text-sm text-[#C1503B]">Could not load notifications.</p>}
+      {isError && <p className="text-sm text-[var(--danger)]">Could not load notifications.</p>}
 
       {!isLoading && !isError && items.length === 0 && (
-        <div className="rounded-2xl border border-[#ECE1CC] bg-white py-10 text-center">
-          <div className="mb-1 text-[15px] font-semibold text-[#0F2A38]">You're all caught up.</div>
-          <p className="text-xs text-[#8B9AA3]">Nothing needs your attention right now.</p>
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] py-10 text-center">
+          <div className="mb-1 text-[length:var(--text-10)] font-semibold text-[var(--text-strong)]">You're all caught up.</div>
+          <p className="text-xs text-[var(--text-muted)]">Nothing needs your attention right now.</p>
         </div>
       )}
 
@@ -88,11 +88,11 @@ export function NotificationsPage({ onNavigate }: { onNavigate: (tab: 'yellow-zo
       )}
 
       {data && data.totalPages > 1 && (
-        <div className="mt-3.5 flex items-center justify-between text-[11.5px] text-[#5C6B75]">
+        <div className="mt-3.5 flex items-center justify-between text-[length:var(--text-5)] text-[var(--text-secondary)]">
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page <= 1}
-            className="rounded-lg border border-[#ECE1CC] px-3 py-1.5 font-semibold hover:bg-[#F3EDDD] disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg border border-[var(--border)] px-3 py-1.5 font-semibold hover:bg-[var(--surface-card-alt)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             Previous
           </button>
@@ -102,7 +102,7 @@ export function NotificationsPage({ onNavigate }: { onNavigate: (tab: 'yellow-zo
           <button
             onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
             disabled={page >= data.totalPages}
-            className="rounded-lg border border-[#ECE1CC] px-3 py-1.5 font-semibold hover:bg-[#F3EDDD] disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg border border-[var(--border)] px-3 py-1.5 font-semibold hover:bg-[var(--surface-card-alt)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             Next
           </button>
@@ -123,25 +123,25 @@ function NotificationRow({
   return (
     <div
       onClick={onOpen}
-      className="flex cursor-pointer items-start gap-2.5 rounded-lg border px-3.5 py-3 transition hover:bg-[#FBF6EE]"
+      className="flex cursor-pointer items-start gap-2.5 rounded-lg border px-3.5 py-3 transition hover:bg-[var(--surface-page-1)]"
       style={{
-        borderColor: isUnread ? '#1E7A8C' : '#ECE1CC',
-        background: isUnread ? '#EAF3F1' : '#FFFFFF',
+        borderColor: isUnread ? 'var(--accent)' : 'var(--border)',
+        background: isUnread ? 'var(--accent-tint)' : 'var(--surface-card)',
       }}
     >
       <span
         className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full"
-        style={{ background: isUnread ? '#1E7A8C' : 'transparent' }}
+        style={{ background: isUnread ? 'var(--accent)' : 'transparent' }}
         aria-hidden="true"
       />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[12.5px] font-semibold text-[#0F2A38]">{notification.title}</span>
-          <span className="flex-shrink-0 text-[11px] text-[#8B9AA3]">
+          <span className="text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">{notification.title}</span>
+          <span className="flex-shrink-0 text-[length:var(--text-4)] text-[var(--text-muted)]">
             {formatRelativeTime(notification.createdAt)}
           </span>
         </div>
-        <p className="mt-1 text-[11.5px] text-[#5C6B75]">{notification.message}</p>
+        <p className="mt-1 text-[length:var(--text-5)] text-[var(--text-secondary)]">{notification.message}</p>
       </div>
     </div>
   );
@@ -151,9 +151,9 @@ function NotificationListSkeleton() {
   return (
     <div className="flex flex-col gap-2">
       {[0, 1, 2].map((i) => (
-        <div key={i} className="animate-pulse rounded-lg border border-[#ECE1CC] p-3">
-          <div className="h-3 w-1/3 rounded bg-[#F0EADC]" />
-          <div className="mt-2 h-2.5 w-1/2 rounded bg-[#F5F0E6]" />
+        <div key={i} className="animate-pulse rounded-lg border border-[var(--border)] p-3">
+          <div className="h-3 w-1/3 rounded bg-[var(--surface-muted-3)]" />
+          <div className="mt-2 h-2.5 w-1/2 rounded bg-[var(--surface-muted-2)]" />
         </div>
       ))}
     </div>

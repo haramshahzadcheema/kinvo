@@ -40,19 +40,19 @@ export function CallsPage({ onNavigate }: { onNavigate: (tab: 'assignments') => 
   return (
     <div className="animate-[tideIn_0.2s_ease]">
       <div className="mb-5">
-        <h1 className="text-lg font-bold text-[#0F2A38]">Calls</h1>
-        <p className="mt-0.5 text-xs text-[#8B9AA3]">
+        <h1 className="text-lg font-bold text-[var(--text-strong)]">Calls</h1>
+        <p className="mt-0.5 text-xs text-[var(--text-muted)]">
           What CALL-E has been doing — every automated driver call, across every ship.
         </p>
       </div>
 
       <div className="mb-3.5 grid grid-cols-2 gap-2.5 sm:grid-cols-5">
-        <div className="rounded-xl border border-[#ECE1CC] bg-white px-3.5 py-2.5 text-left">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-card)] px-3.5 py-2.5 text-left">
+          <div className="text-[length:var(--text-2)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
             Calling now
           </div>
           {countsLoading ? (
-            <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[#F0EADC]" />
+            <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[var(--surface-muted-3)]" />
           ) : (
             <div className="mt-0.5 text-lg font-bold" style={{ color: CALL_STATUS_STYLE.CALLING.color }}>
               {activeCount}
@@ -65,15 +65,15 @@ export function CallsPage({ onNavigate }: { onNavigate: (tab: 'assignments') => 
             onClick={() => changeOutcomeFilter(outcomeFilter === outcome ? '' : outcome)}
             className="rounded-xl border px-3.5 py-2.5 text-left transition"
             style={{
-              borderColor: outcomeFilter === outcome ? CALL_STATUS_STYLE[outcome].color : '#ECE1CC',
-              background: outcomeFilter === outcome ? CALL_STATUS_STYLE[outcome].bg : '#FFFFFF',
+              borderColor: outcomeFilter === outcome ? CALL_STATUS_STYLE[outcome].color : 'var(--border)',
+              background: outcomeFilter === outcome ? CALL_STATUS_STYLE[outcome].bg : 'var(--surface-card)',
             }}
           >
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+            <div className="text-[length:var(--text-2)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
               {ATTEMPT_OUTCOME_LABEL[outcome]}
             </div>
             {countsLoading ? (
-              <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[#F0EADC]" />
+              <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[var(--surface-muted-3)]" />
             ) : (
               <div className="mt-0.5 text-lg font-bold" style={{ color: CALL_STATUS_STYLE[outcome].color }}>
                 {counts[outcome]}
@@ -86,26 +86,26 @@ export function CallsPage({ onNavigate }: { onNavigate: (tab: 'assignments') => 
       {outcomeFilter && (
         <button
           onClick={() => changeOutcomeFilter('')}
-          className="mb-3.5 text-[11.5px] font-semibold text-[#8B9AA3] hover:text-[#0F2A38]"
+          className="mb-3.5 text-[length:var(--text-5)] font-semibold text-[var(--text-muted)] hover:text-[var(--text-strong)]"
         >
           Show all outcomes
         </button>
       )}
 
-      <div className="mb-3.5 rounded-2xl border border-[#ECE1CC] bg-white p-4.5">
-        <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+      <div className="mb-3.5 rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-4.5">
+        <h3 className="mb-3 text-[length:var(--text-4)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
           Calling now
         </h3>
         {activeLoading && (
           <div className="flex flex-col gap-2">
             {[0, 1].map((i) => (
-              <div key={i} className="h-9 animate-pulse rounded-lg bg-[#F5F0E6]" />
+              <div key={i} className="h-9 animate-pulse rounded-lg bg-[var(--surface-muted-2)]" />
             ))}
           </div>
         )}
-        {activeError && <p className="text-xs text-[#C1503B]">Could not load active calls.</p>}
+        {activeError && <p className="text-xs text-[var(--danger)]">Could not load active calls.</p>}
         {!activeLoading && !activeError && activeCalls.length === 0 && (
-          <p className="text-xs text-[#8B9AA3]">No calls in progress right now.</p>
+          <p className="text-xs text-[var(--text-muted)]">No calls in progress right now.</p>
         )}
         {!activeLoading && activeCalls.length > 0 && (
           <div className="flex flex-col gap-2">
@@ -113,18 +113,18 @@ export function CallsPage({ onNavigate }: { onNavigate: (tab: 'assignments') => 
               <div
                 key={call.id}
                 onClick={() => setSelectedCall(call)}
-                className="flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-[#F5EEE0] px-3 py-2 transition hover:bg-[#FBF6EE]"
+                className="flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-[var(--surface-muted)] px-3 py-2 transition hover:bg-[var(--surface-page-1)]"
               >
                 <div className="min-w-0">
-                  <span className="truncate text-[12.5px] font-semibold text-[#0F2A38]">
+                  <span className="truncate text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">
                     {call.driverName}
                   </span>
-                  <span className="ml-1.5 text-[11px] text-[#8B9AA3]">
+                  <span className="ml-1.5 text-[length:var(--text-4)] text-[var(--text-muted)]">
                     {call.shipName} · {call.destination}
                   </span>
                 </div>
                 <span
-                  className="flex flex-shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                  className="flex flex-shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[length:var(--text-2)] font-semibold"
                   style={{ background: CALL_STATUS_STYLE.CALLING.bg, color: CALL_STATUS_STYLE.CALLING.color }}
                 >
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
@@ -136,21 +136,21 @@ export function CallsPage({ onNavigate }: { onNavigate: (tab: 'assignments') => 
         )}
       </div>
 
-      <h3 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+      <h3 className="mb-2.5 text-[length:var(--text-4)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
         Call history
       </h3>
 
       {isLoading && <CallsListSkeleton />}
-      {isError && <p className="text-sm text-[#C1503B]">Could not load call history.</p>}
+      {isError && <p className="text-sm text-[var(--danger)]">Could not load call history.</p>}
 
       {!isLoading && !isError && calls.length === 0 && (
-        <div className="rounded-2xl border border-[#ECE1CC] bg-white py-10 text-center">
-          <div className="mb-1 text-[15px] font-semibold text-[#0F2A38]">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] py-10 text-center">
+          <div className="mb-1 text-[length:var(--text-10)] font-semibold text-[var(--text-strong)]">
             {outcomeFilter
               ? `No calls with outcome "${ATTEMPT_OUTCOME_LABEL[outcomeFilter].toLowerCase()}"`
               : 'No automated calls yet'}
           </div>
-          <p className="text-xs text-[#8B9AA3]">
+          <p className="text-xs text-[var(--text-muted)]">
             Calls placed to drivers from an assignment's outreach will show up here once resolved.
           </p>
         </div>
@@ -165,11 +165,11 @@ export function CallsPage({ onNavigate }: { onNavigate: (tab: 'assignments') => 
       )}
 
       {data && data.totalPages > 1 && (
-        <div className="mt-3.5 flex items-center justify-between text-[11.5px] text-[#5C6B75]">
+        <div className="mt-3.5 flex items-center justify-between text-[length:var(--text-5)] text-[var(--text-secondary)]">
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page <= 1}
-            className="rounded-lg border border-[#ECE1CC] px-3 py-1.5 font-semibold hover:bg-[#F3EDDD] disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg border border-[var(--border)] px-3 py-1.5 font-semibold hover:bg-[var(--surface-card-alt)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             Previous
           </button>
@@ -179,7 +179,7 @@ export function CallsPage({ onNavigate }: { onNavigate: (tab: 'assignments') => 
           <button
             onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
             disabled={page >= data.totalPages}
-            className="rounded-lg border border-[#ECE1CC] px-3 py-1.5 font-semibold hover:bg-[#F3EDDD] disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg border border-[var(--border)] px-3 py-1.5 font-semibold hover:bg-[var(--surface-card-alt)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             Next
           </button>
@@ -211,21 +211,21 @@ function CallRow({ call, onOpen }: { call: ResolvedVoiceCallDto; onOpen: () => v
   return (
     <div
       onClick={onOpen}
-      className="cursor-pointer rounded-lg border border-[#ECE1CC] bg-white px-3.5 py-3 transition hover:bg-[#FBF6EE]"
+      className="cursor-pointer rounded-lg border border-[var(--border)] bg-[var(--surface-card)] px-3.5 py-3 transition hover:bg-[var(--surface-page-1)]"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <span className="text-[12.5px] font-semibold text-[#0F2A38]">{call.driverName}</span>
-          <span className="ml-1.5 text-[11px] text-[#8B9AA3]">{call.driverPhone}</span>
+          <span className="text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">{call.driverName}</span>
+          <span className="ml-1.5 text-[length:var(--text-4)] text-[var(--text-muted)]">{call.driverPhone}</span>
         </div>
         <span
-          className="flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+          className="flex-shrink-0 rounded-full px-2 py-0.5 text-[length:var(--text-2)] font-semibold"
           style={{ background: style.bg, color: style.color }}
         >
           {CALL_STATUS_LABEL[call.outcome]}
         </span>
       </div>
-      <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#8B9AA3]">
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[length:var(--text-4)] text-[var(--text-muted)]">
         <span className="truncate">
           {call.shipName} · {call.destination} · {call.truckType}
         </span>
@@ -239,9 +239,9 @@ function CallsListSkeleton() {
   return (
     <div className="flex flex-col gap-2">
       {[0, 1, 2].map((i) => (
-        <div key={i} className="animate-pulse rounded-lg border border-[#ECE1CC] p-3">
-          <div className="h-3 w-1/3 rounded bg-[#F0EADC]" />
-          <div className="mt-2 h-2.5 w-1/2 rounded bg-[#F5F0E6]" />
+        <div key={i} className="animate-pulse rounded-lg border border-[var(--border)] p-3">
+          <div className="h-3 w-1/3 rounded bg-[var(--surface-muted-3)]" />
+          <div className="mt-2 h-2.5 w-1/2 rounded bg-[var(--surface-muted-2)]" />
         </div>
       ))}
     </div>
@@ -263,22 +263,22 @@ function CallDetailModal({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
-      <div onClick={onClose} className="absolute inset-0 bg-[rgba(15,42,56,0.4)]" />
-      <div className="relative w-full max-w-md animate-[tideIn_0.15s_ease] rounded-2xl border border-[#ECE1CC] bg-white p-5 shadow-xl">
+      <div onClick={onClose} className="absolute inset-0 bg-[var(--surface-overlay)]" />
+      <div className="relative w-full max-w-md animate-[tideIn_0.15s_ease] rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-5 shadow-xl">
         <div className="mb-3.5 flex items-start justify-between gap-2">
           <div>
-            <h3 className="text-[15px] font-bold text-[#0F2A38]">{call.driverName}</h3>
-            <p className="mt-0.5 text-[11.5px] text-[#8B9AA3]">{call.driverPhone}</p>
+            <h3 className="text-[length:var(--text-10)] font-bold text-[var(--text-strong)]">{call.driverName}</h3>
+            <p className="mt-0.5 text-[length:var(--text-5)] text-[var(--text-muted)]">{call.driverPhone}</p>
           </div>
           <span
-            className="flex-shrink-0 rounded-full px-2.5 py-1 text-[10.5px] font-semibold"
+            className="flex-shrink-0 rounded-full px-2.5 py-1 text-[length:var(--text-3)] font-semibold"
             style={{ background: style.bg, color: style.color }}
           >
             {label}
           </span>
         </div>
 
-        <dl className="flex flex-col gap-2 text-[12.5px]">
+        <dl className="flex flex-col gap-2 text-[length:var(--text-7)]">
           <DetailRow label="Ship / destination" value={`${call.shipName} · ${call.destination}`} />
           <DetailRow label="Truck type" value={call.truckType} />
           <DetailRow label="Provider" value={call.provider} />
@@ -296,13 +296,13 @@ function CallDetailModal({
         <div className="mt-4.5 flex gap-2">
           <button
             onClick={onClose}
-            className="flex-1 rounded-lg border border-[#ECE1CC] py-2 text-[12.5px] font-semibold text-[#5C6B75] hover:bg-[#F3EDDD]"
+            className="flex-1 rounded-lg border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)]"
           >
             Close
           </button>
           <button
             onClick={onViewAssignment}
-            className="flex-1 rounded-lg bg-[#1E7A8C] py-2 text-[12.5px] font-semibold text-white hover:bg-[#175F6E]"
+            className="flex-1 rounded-lg bg-[var(--accent)] py-2 text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)]"
           >
             View in Assignments
           </button>
@@ -314,9 +314,9 @@ function CallDetailModal({
 
 function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="flex items-start justify-between gap-3 border-b border-[#F5EEE0] pb-2">
-      <dt className="flex-shrink-0 text-[#8B9AA3]">{label}</dt>
-      <dd className={`text-right text-[#0F2A38] ${mono ? 'font-mono text-[11px]' : ''}`}>{value}</dd>
+    <div className="flex items-start justify-between gap-3 border-b border-[var(--surface-muted)] pb-2">
+      <dt className="flex-shrink-0 text-[var(--text-muted)]">{label}</dt>
+      <dd className={`text-right text-[var(--text-strong)] ${mono ? 'font-mono text-[length:var(--text-4)]' : ''}`}>{value}</dd>
     </div>
   );
 }

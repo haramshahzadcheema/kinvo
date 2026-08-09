@@ -55,13 +55,13 @@ export function YellowZonePage({ onNavigate }: { onNavigate: (tab: 'assignments'
     <div className="animate-[tideIn_0.2s_ease]">
       <div className="mb-5 flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-lg font-bold text-[#0F2A38]">Yellow Zone</h1>
-          <p className="mt-0.5 text-xs text-[#8B9AA3]">
+          <h1 className="text-lg font-bold text-[var(--text-strong)]">Yellow Zone</h1>
+          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
             Automated calls CALL-E couldn't resolve on its own — reviewed and cleared here.
           </p>
         </div>
         {connectionStatus === 'connecting' && (
-          <span className="flex flex-shrink-0 items-center gap-1.5 rounded-full bg-[#F1F1EE] px-2.5 py-1 text-[10.5px] font-semibold text-[#8B9AA3]">
+          <span className="flex flex-shrink-0 items-center gap-1.5 rounded-full bg-[var(--surface-neutral-chip)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-[var(--text-muted)]">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
             Reconnecting…
           </span>
@@ -75,15 +75,15 @@ export function YellowZonePage({ onNavigate }: { onNavigate: (tab: 'assignments'
             onClick={() => changeStatusFilter(statusFilter === status ? '' : status)}
             className="rounded-xl border px-3.5 py-2.5 text-left transition"
             style={{
-              borderColor: statusFilter === status ? YELLOW_ZONE_STATUS_STYLE[status].color : '#ECE1CC',
-              background: statusFilter === status ? YELLOW_ZONE_STATUS_STYLE[status].bg : '#FFFFFF',
+              borderColor: statusFilter === status ? YELLOW_ZONE_STATUS_STYLE[status].color : 'var(--border)',
+              background: statusFilter === status ? YELLOW_ZONE_STATUS_STYLE[status].bg : 'var(--surface-card)',
             }}
           >
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+            <div className="text-[length:var(--text-2)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
               {YELLOW_ZONE_STATUS_LABEL[status]}
             </div>
             {countsLoading ? (
-              <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[#F0EADC]" />
+              <div className="mt-1.5 h-5 w-8 animate-pulse rounded bg-[var(--surface-muted-3)]" />
             ) : (
               <div
                 className="mt-0.5 text-lg font-bold"
@@ -97,18 +97,18 @@ export function YellowZonePage({ onNavigate }: { onNavigate: (tab: 'assignments'
       </div>
 
       <div className="mb-3.5 flex flex-wrap items-center gap-2">
-        <span className="text-[10.5px] font-semibold uppercase tracking-wide text-[#8B9AA3]">
+        <span className="text-[length:var(--text-3)] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
           Priority
         </span>
         {PRIORITY_FILTERS.map((priority) => (
           <button
             key={priority}
             onClick={() => changePriorityFilter(priority)}
-            className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition"
+            className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[length:var(--text-4)] font-semibold transition"
             style={{
-              borderColor: priorityFilter === priority ? YELLOW_ZONE_PRIORITY_STYLE[priority].color : '#ECE1CC',
-              background: priorityFilter === priority ? YELLOW_ZONE_PRIORITY_STYLE[priority].bg : '#FFFFFF',
-              color: priorityFilter === priority ? YELLOW_ZONE_PRIORITY_STYLE[priority].color : '#5C6B75',
+              borderColor: priorityFilter === priority ? YELLOW_ZONE_PRIORITY_STYLE[priority].color : 'var(--border)',
+              background: priorityFilter === priority ? YELLOW_ZONE_PRIORITY_STYLE[priority].bg : 'var(--surface-card)',
+              color: priorityFilter === priority ? YELLOW_ZONE_PRIORITY_STYLE[priority].color : 'var(--text-secondary)',
             }}
           >
             <PriorityDots priority={priority} />
@@ -121,7 +121,7 @@ export function YellowZonePage({ onNavigate }: { onNavigate: (tab: 'assignments'
               changeStatusFilter('');
               setPriorityFilter('');
             }}
-            className="text-[11px] font-semibold text-[#8B9AA3] hover:text-[#0F2A38]"
+            className="text-[length:var(--text-4)] font-semibold text-[var(--text-muted)] hover:text-[var(--text-strong)]"
           >
             Clear filters
           </button>
@@ -129,16 +129,16 @@ export function YellowZonePage({ onNavigate }: { onNavigate: (tab: 'assignments'
       </div>
 
       {isLoading && <YellowZoneListSkeleton />}
-      {isError && <p className="text-sm text-[#C1503B]">Could not load the Yellow Zone queue.</p>}
+      {isError && <p className="text-sm text-[var(--danger)]">Could not load the Yellow Zone queue.</p>}
 
       {!isLoading && !isError && items.length === 0 && (
-        <div className="rounded-2xl border border-[#ECE1CC] bg-white py-10 text-center">
-          <div className="mb-1 text-[15px] font-semibold text-[#0F2A38]">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] py-10 text-center">
+          <div className="mb-1 text-[length:var(--text-10)] font-semibold text-[var(--text-strong)]">
             {statusFilter === 'PENDING' || statusFilter === ''
               ? 'Good — nothing needs your attention.'
               : `No ${YELLOW_ZONE_STATUS_LABEL[statusFilter || 'PENDING'].toLowerCase()} items`}
           </div>
-          <p className="text-xs text-[#8B9AA3]">
+          <p className="text-xs text-[var(--text-muted)]">
             Every automated call CALL-E couldn't resolve on its own will show up here.
           </p>
         </div>
@@ -153,11 +153,11 @@ export function YellowZonePage({ onNavigate }: { onNavigate: (tab: 'assignments'
       )}
 
       {data && data.totalPages > 1 && (
-        <div className="mt-3.5 flex items-center justify-between text-[11.5px] text-[#5C6B75]">
+        <div className="mt-3.5 flex items-center justify-between text-[length:var(--text-5)] text-[var(--text-secondary)]">
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page <= 1}
-            className="rounded-lg border border-[#ECE1CC] px-3 py-1.5 font-semibold hover:bg-[#F3EDDD] disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg border border-[var(--border)] px-3 py-1.5 font-semibold hover:bg-[var(--surface-card-alt)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             Previous
           </button>
@@ -167,7 +167,7 @@ export function YellowZonePage({ onNavigate }: { onNavigate: (tab: 'assignments'
           <button
             onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
             disabled={page >= data.totalPages}
-            className="rounded-lg border border-[#ECE1CC] px-3 py-1.5 font-semibold hover:bg-[#F3EDDD] disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg border border-[var(--border)] px-3 py-1.5 font-semibold hover:bg-[var(--surface-card-alt)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             Next
           </button>
@@ -197,7 +197,7 @@ function PriorityDots({ priority }: { priority: YellowZonePriorityValue }) {
         <span
           key={i}
           className="h-1.5 w-1.5 rounded-full"
-          style={{ background: i < filled ? 'currentColor' : '#E2DBC9' }}
+          style={{ background: i < filled ? 'currentColor' : 'var(--border-strong)' }}
         />
       ))}
     </span>
@@ -210,33 +210,33 @@ function YellowZoneRow({ item, onOpen }: { item: YellowZoneItemDto; onOpen: () =
   return (
     <div
       onClick={onOpen}
-      className="cursor-pointer rounded-lg border border-[#ECE1CC] bg-white px-3.5 py-3 transition hover:bg-[#FBF6EE]"
+      className="cursor-pointer rounded-lg border border-[var(--border)] bg-[var(--surface-card)] px-3.5 py-3 transition hover:bg-[var(--surface-page-1)]"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <span className="text-[12.5px] font-semibold text-[#0F2A38]">{item.driverName}</span>
-          <span className="ml-1.5 text-[11px] text-[#8B9AA3]">
+          <span className="text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">{item.driverName}</span>
+          <span className="ml-1.5 text-[length:var(--text-4)] text-[var(--text-muted)]">
             {item.shipName} · {item.destination}
           </span>
         </div>
         <div className="flex flex-shrink-0 items-center gap-1.5">
           <span
-            className="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+            className="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[length:var(--text-2)] font-semibold"
             style={{ background: priorityStyle.bg, color: priorityStyle.color }}
           >
             <PriorityDots priority={item.priority} />
             {item.priority}
           </span>
           <span
-            className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+            className="rounded-full px-2 py-0.5 text-[length:var(--text-2)] font-semibold"
             style={{ background: statusStyle.bg, color: statusStyle.color }}
           >
             {YELLOW_ZONE_STATUS_LABEL[item.status]}
           </span>
         </div>
       </div>
-      <p className="mt-1.5 truncate text-[11.5px] text-[#5C6B75]">{item.reason}</p>
-      <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#8B9AA3]">
+      <p className="mt-1.5 truncate text-[length:var(--text-5)] text-[var(--text-secondary)]">{item.reason}</p>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[length:var(--text-4)] text-[var(--text-muted)]">
         <span>{item.assignedToUserName ? `Claimed by ${item.assignedToUserName}` : 'Unclaimed'}</span>
         <span className="flex-shrink-0">{formatRelativeTime(item.createdAt)}</span>
       </div>
@@ -248,9 +248,9 @@ function YellowZoneListSkeleton() {
   return (
     <div className="flex flex-col gap-2">
       {[0, 1, 2].map((i) => (
-        <div key={i} className="animate-pulse rounded-lg border border-[#ECE1CC] p-3">
-          <div className="h-3 w-1/3 rounded bg-[#F0EADC]" />
-          <div className="mt-2 h-2.5 w-1/2 rounded bg-[#F5F0E6]" />
+        <div key={i} className="animate-pulse rounded-lg border border-[var(--border)] p-3">
+          <div className="h-3 w-1/3 rounded bg-[var(--surface-muted-3)]" />
+          <div className="mt-2 h-2.5 w-1/2 rounded bg-[var(--surface-muted-2)]" />
         </div>
       ))}
     </div>
@@ -352,22 +352,22 @@ function YellowZoneDetailModal({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
-      <div onClick={onClose} className="absolute inset-0 bg-[rgba(15,42,56,0.4)]" />
-      <div className="relative w-full max-w-md animate-[tideIn_0.15s_ease] rounded-2xl border border-[#ECE1CC] bg-white p-5 shadow-xl">
+      <div onClick={onClose} className="absolute inset-0 bg-[var(--surface-overlay)]" />
+      <div className="relative w-full max-w-md animate-[tideIn_0.15s_ease] rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-5 shadow-xl">
         <div className="mb-3.5 flex items-start justify-between gap-2">
           <div>
-            <h3 className="text-[15px] font-bold text-[#0F2A38]">{item.driverName}</h3>
-            <p className="mt-0.5 text-[11.5px] text-[#8B9AA3]">{item.driverPhone}</p>
+            <h3 className="text-[length:var(--text-10)] font-bold text-[var(--text-strong)]">{item.driverName}</h3>
+            <p className="mt-0.5 text-[length:var(--text-5)] text-[var(--text-muted)]">{item.driverPhone}</p>
           </div>
           <div className="flex flex-shrink-0 flex-col items-end gap-1">
             <span
-              className="rounded-full px-2.5 py-1 text-[10.5px] font-semibold"
+              className="rounded-full px-2.5 py-1 text-[length:var(--text-3)] font-semibold"
               style={{ background: statusStyle.bg, color: statusStyle.color }}
             >
               {YELLOW_ZONE_STATUS_LABEL[item.status]}
             </span>
             <span
-              className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10.5px] font-semibold"
+              className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[length:var(--text-3)] font-semibold"
               style={{ background: priorityStyle.bg, color: priorityStyle.color }}
             >
               <PriorityDots priority={item.priority} />
@@ -376,7 +376,7 @@ function YellowZoneDetailModal({
           </div>
         </div>
 
-        <dl className="flex flex-col gap-2 text-[12.5px]">
+        <dl className="flex flex-col gap-2 text-[length:var(--text-7)]">
           <DetailRow label="Ship / destination" value={`${item.shipName} · ${item.destination}`} />
           <DetailRow label="Truck type" value={item.truckType} />
           <DetailRow label="Why it was escalated" value={item.reason} />
@@ -393,17 +393,17 @@ function YellowZoneDetailModal({
             informational; no action here writes anything. */}
         {(item.status === 'PENDING' || item.status === 'IN_REVIEW') &&
           item.assignmentStatus !== 'PENDING' && (
-            <p className="mt-3 rounded-lg bg-[#EAF3F1] px-2.5 py-2 text-[11.5px] text-[#1E7A8C]">
+            <p className="mt-3 rounded-lg bg-[var(--accent-tint)] px-2.5 py-2 text-[length:var(--text-5)] text-[var(--accent)]">
               The underlying assignment is already{' '}
               <strong>{ASSIGNMENT_STATUS_LABEL[item.assignmentStatus]}</strong> — this item may just
               need dismissing.
             </p>
           )}
 
-        {error && <p className="mt-3 text-[11.5px] text-[#C1503B]">{error}</p>}
+        {error && <p className="mt-3 text-[length:var(--text-5)] text-[var(--danger)]">{error}</p>}
 
         {actionMode !== 'none' && (item.status === 'PENDING' || item.status === 'IN_REVIEW') && (
-          <div className="mt-3 rounded-lg bg-[#FBF6EE] p-2.5">
+          <div className="mt-3 rounded-lg bg-[var(--surface-page-1)] p-2.5">
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -411,7 +411,7 @@ function YellowZoneDetailModal({
                 actionMode === 'resolve' ? 'What did you do? (required)' : 'Reason (optional)'
               }
               rows={2}
-              className="w-full resize-none rounded-lg border border-[#ECE1CC] px-2 py-1.5 text-[11.5px] outline-none"
+              className="w-full resize-none rounded-lg border border-[var(--border)] px-2 py-1.5 text-[length:var(--text-5)] outline-none"
             />
             <div className="mt-1.5 flex justify-end gap-1.5">
               <button
@@ -419,14 +419,14 @@ function YellowZoneDetailModal({
                   setActionMode('none');
                   setNotes('');
                 }}
-                className="text-[10.5px] font-semibold text-[#8B9AA3]"
+                className="text-[length:var(--text-3)] font-semibold text-[var(--text-muted)]"
               >
                 Back
               </button>
               <button
                 onClick={actionMode === 'resolve' ? handleResolve : handleDismiss}
                 disabled={isMutating || (actionMode === 'resolve' && !notes.trim())}
-                className="rounded-full bg-[#1E7A8C] px-2.5 py-1 text-[10.5px] font-semibold text-white disabled:opacity-50"
+                className="rounded-full bg-[var(--accent)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-white disabled:opacity-50"
               >
                 {actionMode === 'resolve' ? 'Confirm resolve' : 'Confirm dismiss'}
               </button>
@@ -439,7 +439,7 @@ function YellowZoneDetailModal({
             <button
               onClick={handleClaim}
               disabled={isMutating}
-              className="flex-1 rounded-lg bg-[#1E7A8C] py-2 text-[12.5px] font-semibold text-white hover:bg-[#175F6E] disabled:opacity-50"
+              className="flex-1 rounded-lg bg-[var(--accent)] py-2 text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
             >
               Claim
             </button>
@@ -447,7 +447,7 @@ function YellowZoneDetailModal({
           {item.status === 'IN_REVIEW' && actionMode === 'none' && (
             <button
               onClick={() => setActionMode('resolve')}
-              className="flex-1 rounded-lg bg-[#1E7A8C] py-2 text-[12.5px] font-semibold text-white hover:bg-[#175F6E]"
+              className="flex-1 rounded-lg bg-[var(--accent)] py-2 text-[length:var(--text-7)] font-semibold text-white hover:bg-[var(--accent-hover)]"
             >
               Resolve
             </button>
@@ -460,7 +460,7 @@ function YellowZoneDetailModal({
             <button
               onClick={handleUnclaim}
               disabled={isMutating}
-              className="flex-1 rounded-lg border border-[#ECE1CC] py-2 text-[12.5px] font-semibold text-[#5C6B75] hover:bg-[#F3EDDD] disabled:opacity-50"
+              className="flex-1 rounded-lg border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)] disabled:opacity-50"
             >
               Release
             </button>
@@ -468,21 +468,21 @@ function YellowZoneDetailModal({
           {(item.status === 'PENDING' || item.status === 'IN_REVIEW') && actionMode === 'none' && (
             <button
               onClick={() => setActionMode('dismiss')}
-              className="flex-1 rounded-lg border border-[#ECE1CC] py-2 text-[12.5px] font-semibold text-[#5C6B75] hover:bg-[#F3EDDD]"
+              className="flex-1 rounded-lg border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)]"
             >
               Dismiss
             </button>
           )}
           <button
             onClick={onViewAssignment}
-            className="flex-1 rounded-lg border border-[#ECE1CC] py-2 text-[12.5px] font-semibold text-[#5C6B75] hover:bg-[#F3EDDD]"
+            className="flex-1 rounded-lg border border-[var(--border)] py-2 text-[length:var(--text-7)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)]"
           >
             View in Assignments
           </button>
         </div>
         <button
           onClick={onClose}
-          className="mt-2 w-full rounded-lg py-1.5 text-[11.5px] font-semibold text-[#8B9AA3] hover:text-[#0F2A38]"
+          className="mt-2 w-full rounded-lg py-1.5 text-[length:var(--text-5)] font-semibold text-[var(--text-muted)] hover:text-[var(--text-strong)]"
         >
           Close
         </button>
@@ -493,9 +493,9 @@ function YellowZoneDetailModal({
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-start justify-between gap-3 border-b border-[#F5EEE0] pb-2">
-      <dt className="flex-shrink-0 text-[#8B9AA3]">{label}</dt>
-      <dd className="text-right text-[#0F2A38]">{value}</dd>
+    <div className="flex items-start justify-between gap-3 border-b border-[var(--surface-muted)] pb-2">
+      <dt className="flex-shrink-0 text-[var(--text-muted)]">{label}</dt>
+      <dd className="text-right text-[var(--text-strong)]">{value}</dd>
     </div>
   );
 }

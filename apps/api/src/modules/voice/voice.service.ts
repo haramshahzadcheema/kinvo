@@ -293,9 +293,30 @@ export function createVoiceService({
           where: { role: { in: [...YELLOW_ZONE_ESCALATION_RECIPIENT_ROLES] }, status: 'ACTIVE' },
           select: { userId: true },
         });
+
+        // Settings: honor a recipient's own opt-out. A row only exists
+        // once a user has actually opened Settings (see
+        // preferences.service.ts's lazy-create-on-first-read) — a user
+        // with no row yet has never touched this preference, so the
+        // schema default (true, "notify me") still applies; only an
+        // EXISTING row explicitly set to false removes someone from this
+        // list. Never the other way around (an existing row can't ADD a
+        // recipient who isn't already OWNER/ADMIN/DISPATCHER above).
+        const optedOut = await tx.userPreferences.findMany({
+          where: {
+            userId: { in: recipients.map((m) => m.userId) },
+            yellowZoneEscalationNotifications: false,
+          },
+          select: { userId: true },
+        });
+        const optedOutUserIds = new Set(optedOut.map((p) => p.userId));
+        const recipientUserIds = recipients
+          .map((m) => m.userId)
+          .filter((userId) => !optedOutUserIds.has(userId));
+
         notifications = await notificationService.createForRecipients(
           tx,
-          recipients.map((m) => m.userId),
+          recipientUserIds,
           {
             organizationId: context.organizationId,
             type: 'YELLOW_ZONE_ESCALATED',

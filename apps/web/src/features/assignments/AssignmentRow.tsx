@@ -64,27 +64,27 @@ export function AssignmentRow({
   const declineReason = assignment.cancellationReason ?? assignment.rejectionReason;
 
   return (
-    <div className="rounded-lg border border-[#ECE1CC] p-2.5">
+    <div className="rounded-lg border border-[var(--border)] p-2.5">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="truncate text-[12.5px] font-semibold text-[#0F2A38]">
+          <div className="truncate text-[length:var(--text-7)] font-semibold text-[var(--text-strong)]">
             {assignment.driverName}
           </div>
           {showContext && (
-            <div className="text-[10.5px] text-[#8B9AA3]">
+            <div className="text-[length:var(--text-3)] text-[var(--text-muted)]">
               {assignment.shipName} · {assignment.destination}
             </div>
           )}
-          <div className="text-[10.5px] text-[#8B9AA3]">
+          <div className="text-[length:var(--text-3)] text-[var(--text-muted)]">
             {assignment.driverPhone} · {formatRate(displayedRate, assignment.rateCurrency)}
           </div>
-          <div className="mt-0.5 text-[10px] text-[#8B9AA3]">
+          <div className="mt-0.5 text-[length:var(--text-2)] text-[var(--text-muted)]">
             Invited {formatDateTime(assignment.invitedAt)}
             {assignment.respondedAt && ` · Responded ${formatDateTime(assignment.respondedAt)}`}
           </div>
         </div>
         <span
-          className="flex-shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[10.5px] font-semibold"
+          className="flex-shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[length:var(--text-3)] font-semibold"
           style={{
             background: ASSIGNMENT_STATUS_STYLE[assignment.status].bg,
             color: ASSIGNMENT_STATUS_STYLE[assignment.status].color,
@@ -95,14 +95,14 @@ export function AssignmentRow({
       </div>
 
       {declineReason && (
-        <div className="mt-1.5 rounded-lg bg-[#FBF6EE] px-2 py-1 text-[10.5px] text-[#5C6B75]">
+        <div className="mt-1.5 rounded-lg bg-[var(--surface-page-1)] px-2 py-1 text-[length:var(--text-3)] text-[var(--text-secondary)]">
           {declineReason}
         </div>
       )}
 
       {assignment.status === 'PENDING' && assignment.pendingVoiceCall && (
-        <div className="mt-1.5 flex items-center gap-1 rounded-lg bg-[#EAF3F1] px-2 py-1 text-[10.5px] font-semibold text-[#1E7A8C]">
-          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#1E7A8C]" />
+        <div className="mt-1.5 flex items-center gap-1 rounded-lg bg-[var(--accent-tint)] px-2 py-1 text-[length:var(--text-3)] font-semibold text-[var(--accent)]">
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
           Calling since {formatDateTime(assignment.pendingVoiceCall.placedAt)}
         </div>
       )}
@@ -112,7 +112,7 @@ export function AssignmentRow({
           <button
             onClick={onConfirm}
             disabled={isMutating}
-            className="rounded-full bg-[#1E7A8C] px-2.5 py-1 text-[10.5px] font-semibold text-white disabled:opacity-50"
+            className="rounded-full bg-[var(--accent)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-white disabled:opacity-50"
           >
             Confirm
           </button>
@@ -120,28 +120,28 @@ export function AssignmentRow({
             onClick={onCallDriver}
             disabled={isMutating || Boolean(assignment.pendingVoiceCall)}
             title="Places an automated confirmation call via CALL-E"
-            className="rounded-full border border-[#1E7A8C] px-2.5 py-1 text-[10.5px] font-semibold text-[#1E7A8C] disabled:opacity-50"
+            className="rounded-full border border-[var(--accent)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-[var(--accent)] disabled:opacity-50"
           >
             {assignment.pendingVoiceCall ? 'Calling…' : 'Call driver'}
           </button>
           <button
             onClick={() => onOpenRowAction('logAttempt')}
             disabled={isMutating}
-            className="rounded-full border border-[#ECE1CC] px-2.5 py-1 text-[10.5px] font-semibold text-[#1E7A8C] disabled:opacity-50"
+            className="rounded-full border border-[var(--border)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-[var(--accent)] disabled:opacity-50"
           >
             Log attempt
           </button>
           <button
             onClick={() => onOpenRowAction('reject')}
             disabled={isMutating}
-            className="rounded-full border border-[#F0C4B8] px-2.5 py-1 text-[10.5px] font-semibold text-[#C1503B] disabled:opacity-50"
+            className="rounded-full border border-[var(--danger-bg-strong)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-[var(--danger)] disabled:opacity-50"
           >
             Reject
           </button>
           <button
             onClick={onWithdraw}
             disabled={isMutating}
-            className="rounded-full bg-[#F3EDDD] px-2.5 py-1 text-[10.5px] font-semibold text-[#0F2A38] disabled:opacity-50"
+            className="rounded-full bg-[var(--surface-card-alt)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-[var(--text-strong)] disabled:opacity-50"
           >
             Withdraw
           </button>
@@ -153,14 +153,14 @@ export function AssignmentRow({
           <button
             onClick={() => onOpenRowAction('cancel')}
             disabled={isMutating}
-            className="rounded-full border border-[#F0C4B8] px-2.5 py-1 text-[10.5px] font-semibold text-[#C1503B] disabled:opacity-50"
+            className="rounded-full border border-[var(--danger-bg-strong)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-[var(--danger)] disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onClick={onNoShow}
             disabled={isMutating}
-            className="rounded-full border border-[#ECE1CC] px-2.5 py-1 text-[10.5px] font-semibold text-[#1E7A8C] disabled:opacity-50"
+            className="rounded-full border border-[var(--border)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-[var(--accent)] disabled:opacity-50"
           >
             Mark no-show
           </button>
@@ -168,21 +168,21 @@ export function AssignmentRow({
       )}
 
       {isActiveRow && rowAction?.kind === 'reject' && (
-        <div className="mt-2 rounded-lg bg-[#FBF6EE] p-2">
+        <div className="mt-2 rounded-lg bg-[var(--surface-page-1)] p-2">
           <input
             value={reasonInput}
             onChange={(e) => onReasonChange(e.target.value)}
             placeholder="Reason (optional)"
-            className="w-full rounded-lg border border-[#ECE1CC] px-2 py-1.5 text-[11.5px] outline-none"
+            className="w-full rounded-lg border border-[var(--border)] px-2 py-1.5 text-[length:var(--text-5)] outline-none"
           />
           <div className="mt-1.5 flex justify-end gap-1.5">
-            <button onClick={onCloseRowAction} className="text-[10.5px] text-[#8B9AA3]">
+            <button onClick={onCloseRowAction} className="text-[length:var(--text-3)] text-[var(--text-muted)]">
               Cancel
             </button>
             <button
               onClick={onReject}
               disabled={isMutating}
-              className="rounded-full bg-[#C1503B] px-2.5 py-1 text-[10.5px] font-semibold text-white disabled:opacity-50"
+              className="rounded-full bg-[var(--danger)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-white disabled:opacity-50"
             >
               Confirm reject
             </button>
@@ -191,21 +191,21 @@ export function AssignmentRow({
       )}
 
       {isActiveRow && rowAction?.kind === 'cancel' && (
-        <div className="mt-2 rounded-lg bg-[#FBF6EE] p-2">
+        <div className="mt-2 rounded-lg bg-[var(--surface-page-1)] p-2">
           <input
             value={reasonInput}
             onChange={(e) => onReasonChange(e.target.value)}
             placeholder="Reason (required)"
-            className="w-full rounded-lg border border-[#ECE1CC] px-2 py-1.5 text-[11.5px] outline-none"
+            className="w-full rounded-lg border border-[var(--border)] px-2 py-1.5 text-[length:var(--text-5)] outline-none"
           />
           <div className="mt-1.5 flex justify-end gap-1.5">
-            <button onClick={onCloseRowAction} className="text-[10.5px] text-[#8B9AA3]">
+            <button onClick={onCloseRowAction} className="text-[length:var(--text-3)] text-[var(--text-muted)]">
               Back
             </button>
             <button
               onClick={onCancel}
               disabled={isMutating || !reasonInput.trim()}
-              className="rounded-full bg-[#C1503B] px-2.5 py-1 text-[10.5px] font-semibold text-white disabled:opacity-50"
+              className="rounded-full bg-[var(--danger)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-white disabled:opacity-50"
             >
               Confirm cancel
             </button>
@@ -214,13 +214,13 @@ export function AssignmentRow({
       )}
 
       {isActiveRow && rowAction?.kind === 'logAttempt' && (
-        <div className="mt-2 rounded-lg bg-[#FBF6EE] p-2">
+        <div className="mt-2 rounded-lg bg-[var(--surface-page-1)] p-2">
           <select
             value={attemptOutcome}
             onChange={(e) =>
               onAttemptOutcomeChange(e.target.value as HumanLoggableAttemptOutcomeValue)
             }
-            className="w-full rounded-lg border border-[#ECE1CC] px-2 py-1.5 text-[11.5px] outline-none"
+            className="w-full rounded-lg border border-[var(--border)] px-2 py-1.5 text-[length:var(--text-5)] outline-none"
           >
             {LOGGABLE_ATTEMPT_OUTCOMES.map((outcome) => (
               <option key={outcome} value={outcome}>
@@ -232,16 +232,16 @@ export function AssignmentRow({
             value={attemptNotes}
             onChange={(e) => onAttemptNotesChange(e.target.value)}
             placeholder="Notes (optional)"
-            className="mt-1.5 w-full rounded-lg border border-[#ECE1CC] px-2 py-1.5 text-[11.5px] outline-none"
+            className="mt-1.5 w-full rounded-lg border border-[var(--border)] px-2 py-1.5 text-[length:var(--text-5)] outline-none"
           />
           <div className="mt-1.5 flex justify-end gap-1.5">
-            <button onClick={onCloseRowAction} className="text-[10.5px] text-[#8B9AA3]">
+            <button onClick={onCloseRowAction} className="text-[length:var(--text-3)] text-[var(--text-muted)]">
               Cancel
             </button>
             <button
               onClick={onLogAttempt}
               disabled={isMutating}
-              className="rounded-full bg-[#1E7A8C] px-2.5 py-1 text-[10.5px] font-semibold text-white disabled:opacity-50"
+              className="rounded-full bg-[var(--accent)] px-2.5 py-1 text-[length:var(--text-3)] font-semibold text-white disabled:opacity-50"
             >
               Save attempt
             </button>
@@ -251,16 +251,16 @@ export function AssignmentRow({
 
       {assignment.attempts.length > 0 && (
         <details className="mt-2">
-          <summary className="cursor-pointer text-[10.5px] font-semibold text-[#8B9AA3]">
+          <summary className="cursor-pointer text-[length:var(--text-3)] font-semibold text-[var(--text-muted)]">
             {assignment.attempts.length} contact attempt
             {assignment.attempts.length === 1 ? '' : 's'}
           </summary>
           <div className="mt-1.5 flex flex-col gap-1">
             {assignment.attempts.map((att) => (
-              <div key={att.id} className="text-[10.5px] text-[#5C6B75]">
+              <div key={att.id} className="text-[length:var(--text-3)] text-[var(--text-secondary)]">
                 {formatDateTime(att.attemptedAt)} · {ATTEMPT_OUTCOME_LABEL[att.outcome]}
                 {att.provider && (
-                  <span className="ml-1 rounded-full bg-[#EAF3F1] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[#1E7A8C]">
+                  <span className="ml-1 rounded-full bg-[var(--accent-tint)] px-1.5 py-0.5 text-[length:var(--text-1)] font-semibold uppercase tracking-wide text-[var(--accent)]">
                     Automated · {att.provider}
                   </span>
                 )}

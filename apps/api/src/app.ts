@@ -16,6 +16,7 @@ import { createDriversRouter } from './modules/drivers/drivers.routes';
 import { createHealthRouter } from './modules/health/health.routes';
 import { createNotificationRouter } from './modules/notifications/notification.routes';
 import { createOrganizationsRouter } from './modules/organizations/organizations.routes';
+import { createPreferencesRouter } from './modules/preferences/preferences.routes';
 import { createShipsRouter } from './modules/ships/ships.routes';
 import { createVoiceRouters } from './modules/voice/voice.routes';
 import { createYellowZoneRouter } from './modules/yellow-zone/yellow-zone.routes';
@@ -80,6 +81,10 @@ export function createApp(container: Container): Express {
   app.use(
     '/api/v1/notifications',
     createNotificationRouter(container.notificationService, authenticate),
+  );
+  app.use(
+    '/api/v1/me/preferences',
+    createPreferencesRouter(container.preferencesService, authenticate),
   );
 
   app.use(notFoundHandler);

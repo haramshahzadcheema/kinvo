@@ -160,6 +160,37 @@ describe('notification module — recipient targeting', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`);
     expect(response.body).toEqual({ count: 1 });
   });
+
+  // Settings feature: a recipient who has turned off
+  // yellowZoneEscalationNotifications must be excluded from the fan-out —
+  // never build a toggle that visually changes but does nothing. The
+  // dispatcher who never touched Settings (no UserPreferences row exists
+  // yet) is the control: still notified by default.
+  it('excludes a recipient who has opted out of Yellow Zone escalation notifications', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, assignmentId } = await setUpPendingAssignment(app);
+    const dispatcher = await inviteMember(app, owner, 'DISPATCHER', 'dispatcher3@example.com');
+
+    await request(app)
+      .patch('/api/v1/me/preferences')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ yellowZoneEscalationNotifications: false });
+
+    await placeAndResolve(container, owner, assignmentId, {
+      kind: 'system_error',
+      reason: 'CALL-E reported the call as failed.',
+    });
+
+    const ownerInbox = await request(app)
+      .get('/api/v1/notifications')
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(ownerInbox.body.items).toHaveLength(0);
+
+    const dispatcherInbox = await request(app)
+      .get('/api/v1/notifications')
+      .set('Authorization', `Bearer ${dispatcher.accessToken}`);
+    expect(dispatcherInbox.body.items).toHaveLength(1);
+  });
 });
 
 describe('notification module — tenant isolation', () => {
