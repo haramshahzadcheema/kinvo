@@ -196,6 +196,21 @@ export {
 export type { TimelineEntryDto, TimelineListQuery, TimelineListResponse } from './timeline.schema';
 
 export {
+  analyticsSummaryQuerySchema,
+  analyticsStatSchema,
+  dailyCallVolumeSchema,
+  yellowZonePriorityBreakdownSchema,
+  analyticsSummarySchema,
+} from './analytics.schema';
+export type {
+  AnalyticsSummaryQuery,
+  AnalyticsStatDto,
+  DailyCallVolumeDto,
+  YellowZonePriorityBreakdownDto,
+  AnalyticsSummaryDto,
+} from './analytics.schema';
+
+export {
   notificationTypeSchema,
   notificationTargetTypeSchema,
   notificationSchema,

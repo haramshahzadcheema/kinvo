@@ -10,6 +10,7 @@ import { createAuthenticateMiddleware } from './core/middleware/authenticate';
 import { errorHandler } from './core/middleware/errorHandler';
 import { notFoundHandler } from './core/middleware/notFound';
 import { logger } from './core/logger';
+import { createAnalyticsRouter } from './modules/analytics/analytics.routes';
 import { createAssignmentsRouter } from './modules/assignments/assignments.routes';
 import { createAuthRouter } from './modules/auth/auth.routes';
 import { createDriversRouter } from './modules/drivers/drivers.routes';
@@ -93,6 +94,7 @@ export function createApp(container: Container): Express {
     createRemindersRouter(container.remindersService, authenticate),
   );
   app.use('/api/v1/timeline', createTimelineRouter(container.timelineService, authenticate));
+  app.use('/api/v1/analytics', createAnalyticsRouter(container.analyticsService, authenticate));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

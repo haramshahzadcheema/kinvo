@@ -186,3 +186,11 @@ export function TranscriptIcon(props: SVGProps<SVGSVGElement>) {
     </Icon>
   );
 }
+
+export function AnalyticsIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M4 20V10M12 20V4M20 20v-7" />
+    </Icon>
+  );
+}

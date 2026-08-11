@@ -26,7 +26,8 @@ export type Action =
   | 'yellow-zone:manage'
   | 'reminders:read'
   | 'reminders:manage'
-  | 'timeline:read';
+  | 'timeline:read'
+  | 'analytics:read';
 
 const ORGANIZATION_MANAGEMENT_ACTIONS: readonly Action[] = [
   'members:read',
@@ -77,6 +78,11 @@ const REMINDER_ACTIONS: readonly Action[] = ['reminders:read', 'reminders:manage
 // role can see the events relevant to them).
 const TIMELINE_ACTIONS: readonly Action[] = ['timeline:read'];
 
+// Same reasoning as TIMELINE_ACTIONS — a read-only aggregate view over
+// data every other module already writes, no :manage counterpart, open
+// to every role including VIEWER.
+const ANALYTICS_ACTIONS: readonly Action[] = ['analytics:read'];
+
 const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
   OWNER: new Set([
     ...ORGANIZATION_MANAGEMENT_ACTIONS,
@@ -84,6 +90,7 @@ const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
     ...YELLOW_ZONE_ACTIONS,
     ...REMINDER_ACTIONS,
     ...TIMELINE_ACTIONS,
+    ...ANALYTICS_ACTIONS,
   ]),
   ADMIN: new Set([
     ...ORGANIZATION_MANAGEMENT_ACTIONS,
@@ -91,6 +98,7 @@ const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
     ...YELLOW_ZONE_ACTIONS,
     ...REMINDER_ACTIONS,
     ...TIMELINE_ACTIONS,
+    ...ANALYTICS_ACTIONS,
   ]),
   // DISPATCHER is the primary persona for ships/drivers AND Yellow Zone
   // resolution (ARCHITECTURE.md §7) — full manage access on both, but
@@ -101,6 +109,7 @@ const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
     ...YELLOW_ZONE_ACTIONS,
     ...REMINDER_ACTIONS,
     ...TIMELINE_ACTIONS,
+    ...ANALYTICS_ACTIONS,
   ]),
   VIEWER: new Set<Action>([
     'members:read',
@@ -109,6 +118,7 @@ const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
     'yellow-zone:read',
     'reminders:read',
     'timeline:read',
+    'analytics:read',
   ]),
 };
 

@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import {
+  createAnalyticsService,
+  type AnalyticsService,
+} from '../modules/analytics/analytics.service';
+import {
   createAssignmentsService,
   type AssignmentsService,
 } from '../modules/assignments/assignments.service';
@@ -77,6 +81,7 @@ export interface Container {
   preferencesService: PreferencesService;
   remindersService: RemindersService;
   timelineService: TimelineService;
+  analyticsService: AnalyticsService;
   emitToOrganization: EmitToOrganization;
   emitToUser: EmitToUser;
 }
@@ -137,6 +142,7 @@ export function createContainer(): Container {
   const preferencesService = createPreferencesService({ prisma });
   const remindersService = createRemindersService({ prisma, auditLogger });
   const timelineService = createTimelineService({ prisma });
+  const analyticsService = createAnalyticsService({ prisma });
 
   const voiceService = createVoiceService({
     prisma,
@@ -165,6 +171,7 @@ export function createContainer(): Container {
     preferencesService,
     remindersService,
     timelineService,
+    analyticsService,
     emitToOrganization,
     emitToUser,
   };

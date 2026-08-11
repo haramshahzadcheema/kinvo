@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   AlertIcon,
+  AnalyticsIcon,
   AssignmentIcon,
   BellIcon,
   ChevronLeftIcon,
@@ -20,6 +21,7 @@ import {
 import { CallEStatusPill } from './components/CallEStatusPill';
 import { GlobalSearch } from './components/GlobalSearch';
 import { NotificationDropdown } from './components/NotificationDropdown';
+import { AnalyticsPage } from './features/analytics/AnalyticsPage';
 import { AssignmentsPage } from './features/assignments/AssignmentsPage';
 import { AuthScreen } from './features/auth/AuthScreen';
 import { CallsPage } from './features/calls/CallsPage';
@@ -51,6 +53,7 @@ type Tab =
   | 'reminders'
   | 'timeline'
   | 'transcripts'
+  | 'analytics'
   | 'notifications'
   | 'settings';
 
@@ -67,11 +70,12 @@ interface NavGroup {
 
 // Grouped to match the Operations/Fleet/Campaigns/Intelligence/System
 // structure of the reference design (docs: see the "Kinvo UI redesign
-// plan" memory). Intelligence currently carries Timeline and
-// Transcripts — the first two of its four planned pages (Analytics/AI
-// Insights are later Phase E work) — so the group appears with what
-// exists rather than waiting for all four, the same way Campaigns
-// appeared with Recruitment+Reminders alone.
+// plan" memory). Intelligence currently carries Timeline, Transcripts,
+// and Analytics — the first three of its four planned pages (AI Insights
+// is later Phase E work, deliberately last so it can observe real data
+// from the other three instead of empty tables) — so the group appears
+// with what exists rather than waiting for all four, the same way
+// Campaigns appeared with Recruitment+Reminders alone.
 const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Operations',
@@ -101,6 +105,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: 'timeline', label: 'Timeline', icon: TimelineIcon },
       { key: 'transcripts', label: 'Transcripts', icon: TranscriptIcon },
+      { key: 'analytics', label: 'Analytics', icon: AnalyticsIcon },
     ],
   },
   {
@@ -339,6 +344,7 @@ function Shell() {
           {tab === 'reminders' && <RemindersPage />}
           {tab === 'timeline' && <TimelinePage />}
           {tab === 'transcripts' && <TranscriptsPage />}
+          {tab === 'analytics' && <AnalyticsPage />}
           {tab === 'notifications' && <NotificationsPage onNavigate={navigate} />}
           {tab === 'settings' && <SettingsPage />}
         </main>

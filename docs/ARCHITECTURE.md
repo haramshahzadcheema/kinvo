@@ -3275,3 +3275,74 @@ expected since it bypassed the real service function). 334 backend (+4:
 integration tests, plus 6 pre-existing outcomeTranslation assertions
 updated for the outcome shape's new field) and 84 frontend (+5) tests
 passing; full workspace typecheck/lint/build clean.
+
+## UI redesign — Phase E (Intelligence): Analytics
+
+**Scope decided by what's honestly derivable, not by matching the mockup
+stat-for-stat:** the `Kinvo.dc.html` mockup's Analytics view has 6 stat
+cards, a weekly calls chart, and a "Yellow Zone by Category" breakdown.
+Two of the six stats were dropped outright — "Supervisor Hours Saved"
+has no real basis in this codebase (nothing tracks what a manual process
+would have cost) and "Avg Replacement Time" would require inferring a
+"this new assignment replaces that rejected one" link the data model
+doesn't actually carry. "Yellow Zone by Category" became "Yellow Zone by
+Priority": the mockup's categories (Payment Question, Document Missing,
+...) require classifying transcript CONTENT, which nothing in this
+codebase does yet — that's AI Insights territory, dependent on real
+transcript data that only exists as of this session's own Transcripts
+work. Priority (LOW/MEDIUM/HIGH), by contrast, is real, structural data
+`core/yellow-zone/escalationClassification.ts` already computes for
+every escalation. The four stats that shipped — Calls Automated,
+Resolution Rate, Avg Time to Resolve, Yellow Zone Escalations — are each
+a direct aggregate over `AssignmentAttempt`/`VoiceCallPlacement`/
+`YellowZoneItem` rows this codebase already writes for other reasons.
+
+**A real correctness bug caught before it shipped:** the first draft
+computed the rolling window as `now - N*86,400,000ms` and generated day
+buckets by flooring both ends to UTC midnight. Since `windowEnd` was the
+exact current instant (not midnight), `dayRange`'s `cursor < endDay`
+condition could never produce a bucket for TODAY — any event that
+happened today would still count toward the stat totals (which filter
+directly on the un-floored timestamps) but silently vanish from the
+daily series and sparkline. Caught by reasoning through the boundary
+arithmetic before writing the integration tests, not by a failing test
+after the fact. Fixed by switching the whole window to whole UTC
+calendar days: `windowEnd` is the start of tomorrow (so all of today is
+included), `windowStart` is exactly `query.days` calendar days earlier,
+and `dayRange` is called with those same two boundaries — the DB filter
+and the day-bucket scaffold can no longer disagree, because they're
+built from the same two Date values. 13 unit tests lock this in,
+including one that reconstructs the original bug's exact failure mode
+(a mid-day `end` that isn't calendar-aligned).
+
+**Every number has a real formula:**
+- **Calls Automated**: count of `AssignmentAttempt` rows with `provider`
+  set (i.e. CALL-E-originated, not human-recorded) in the window.
+- **Resolution Rate**: the fraction of those attempts whose outcome is
+  CONFIRMED/REJECTED/UNREACHABLE (CALL-E resolved it one way or another)
+  rather than SYSTEM_ERROR (needed human escalation).
+- **Avg Time to Resolve**: mean `resolvedAt - placedAt` across
+  `VoiceCallPlacement` rows resolved in the window — a real proxy for
+  "how long an automated call takes to reach a terminal outcome," not
+  CALL-E's own in-call duration (which this codebase doesn't store).
+- **Yellow Zone Escalations**: count of `YellowZoneItem` rows created in
+  the window, the same real trigger Yellow Zone's own queue is built on
+  (see the Phase 5 Decisions log).
+
+Every stat also carries a `deltaPct` compared to the immediately
+preceding window of the same length — `null`, not `0%` or `Infinity`,
+when the prior window has no data to compare against, matching the
+same "don't fabricate a fact you don't have" principle behind
+`confirmedDriverCountAtApproval`'s nullability in Phase D.
+
+**Live verification performed:** the real demo `AssignmentAttempt` seeded
+during Transcripts' own live verification (a CONFIRMED, provider-backed
+attempt with no matching `VoiceCallPlacement`) was confirmed to produce
+exactly the expected page: "Calls Automated: 1," "Resolution Rate:
+100%," "Avg Time to Resolve: 0s" (honestly zero — no placement duration
+exists for that row), "Yellow Zone Escalations: 0," an honest "No
+escalations in this period" empty state, and a calls chart whose x-axis
+correctly read "5 Aug" through "11 Aug" — seven real calendar days
+ending today, confirming the window-boundary fix live, not just in unit
+tests. 355 backend (+21: 13 unit, 8 integration) and 90 frontend (+6)
+tests passing; full workspace typecheck/lint/build clean.
