@@ -187,6 +187,13 @@ export type {
 } from './reminderCampaign.schema';
 
 export {
+  timelineEntrySchema,
+  timelineListQuerySchema,
+  timelineListResponseSchema,
+} from './timeline.schema';
+export type { TimelineEntryDto, TimelineListQuery, TimelineListResponse } from './timeline.schema';
+
+export {
   notificationTypeSchema,
   notificationTargetTypeSchema,
   notificationSchema,

@@ -158,3 +158,22 @@ export function ReminderIcon(props: SVGProps<SVGSVGElement>) {
     </Icon>
   );
 }
+
+export function DocumentIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
+      <path d="M8 12h8M8 16h5" />
+    </Icon>
+  );
+}
+
+export function TimelineIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3v18" />
+      <path d="M6 7l6-4 6 4" />
+      <path d="M6 17l6 4 6-4" />
+    </Icon>
+  );
+}

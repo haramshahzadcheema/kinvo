@@ -25,7 +25,8 @@ export type Action =
   | 'yellow-zone:read'
   | 'yellow-zone:manage'
   | 'reminders:read'
-  | 'reminders:manage';
+  | 'reminders:manage'
+  | 'timeline:read';
 
 const ORGANIZATION_MANAGEMENT_ACTIONS: readonly Action[] = [
   'members:read',
@@ -67,18 +68,29 @@ const YELLOW_ZONE_ACTIONS: readonly Action[] = ['yellow-zone:read', 'yellow-zone
 // act — see the ReminderCampaign comment in schema.prisma).
 const REMINDER_ACTIONS: readonly Action[] = ['reminders:read', 'reminders:manage'];
 
+// Timeline has no :manage counterpart — it's a read-only feed over events
+// every other module already writes (ship/document/assignment/yellow
+// zone/reminder), never created or edited directly. Granted to all four
+// roles including VIEWER, unlike every other action pair here: it's the
+// org's own operational history, not a capability with a meaningful
+// no-access tier — the same reasoning notifications already got (every
+// role can see the events relevant to them).
+const TIMELINE_ACTIONS: readonly Action[] = ['timeline:read'];
+
 const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
   OWNER: new Set([
     ...ORGANIZATION_MANAGEMENT_ACTIONS,
     ...LOGISTICS_ACTIONS,
     ...YELLOW_ZONE_ACTIONS,
     ...REMINDER_ACTIONS,
+    ...TIMELINE_ACTIONS,
   ]),
   ADMIN: new Set([
     ...ORGANIZATION_MANAGEMENT_ACTIONS,
     ...LOGISTICS_ACTIONS,
     ...YELLOW_ZONE_ACTIONS,
     ...REMINDER_ACTIONS,
+    ...TIMELINE_ACTIONS,
   ]),
   // DISPATCHER is the primary persona for ships/drivers AND Yellow Zone
   // resolution (ARCHITECTURE.md §7) — full manage access on both, but
@@ -88,6 +100,7 @@ const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
     ...LOGISTICS_ACTIONS,
     ...YELLOW_ZONE_ACTIONS,
     ...REMINDER_ACTIONS,
+    ...TIMELINE_ACTIONS,
   ]),
   VIEWER: new Set<Action>([
     'members:read',
@@ -95,6 +108,7 @@ const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
     'drivers:read',
     'yellow-zone:read',
     'reminders:read',
+    'timeline:read',
   ]),
 };
 

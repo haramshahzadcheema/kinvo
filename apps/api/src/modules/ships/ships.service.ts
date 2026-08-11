@@ -534,7 +534,7 @@ export function createShipsService({
 
   async function deleteShip(shipId: string): Promise<void> {
     const context = getRequestContext();
-    await resolveOwnedShip(shipId);
+    const target = await resolveOwnedShip(shipId);
 
     // Cascades to truckRequirements/documentRequirements (onDelete: Cascade
     // in schema.prisma) and to any Driver.currentShipId pointing here
@@ -546,6 +546,10 @@ export function createShipsService({
       actorUserId: context.userId,
       organizationId: context.organizationId,
       targetId: shipId,
+      // shipName captured before delete — the ship row is gone by the time
+      // anything reads this event back (Timeline), so unlike every other
+      // ship.* event this can't be resolved with a join afterward.
+      metadata: { shipName: target.shipName },
     });
   }
 
@@ -680,10 +684,24 @@ export function createShipsService({
     shipId: string,
     input: DocumentRequirementInput,
   ): Promise<DocumentRequirementDto> {
+    const context = getRequestContext();
     await resolveOwnedShip(shipId);
     const requirement = await prisma.documentRequirement.create({
       data: { shipId, documentType: input.documentType, isRequired: input.isRequired },
     });
+
+    // targetId is the ship, not the document requirement itself — matches
+    // ship.updated's convention, and is what lets Timeline's per-ship query
+    // treat this as a direct-lookup event with no join required (see
+    // timeline.service.ts's DIRECT_SHIP_EVENT_TYPES).
+    await auditLogger.record({
+      type: 'document.added',
+      actorUserId: context.userId,
+      organizationId: context.organizationId,
+      targetId: shipId,
+      metadata: { documentRequirementId: requirement.id, documentType: requirement.documentType },
+    });
+
     return toDocumentRequirementDto(requirement);
   }
 
@@ -692,12 +710,22 @@ export function createShipsService({
     documentRequirementId: string,
     input: Partial<DocumentRequirementInput>,
   ): Promise<DocumentRequirementDto> {
+    const context = getRequestContext();
     await resolveOwnedDocumentRequirement(shipId, documentRequirementId);
 
     const requirement = await prisma.documentRequirement.update({
       where: { id: documentRequirementId },
       data: input,
     });
+
+    await auditLogger.record({
+      type: 'document.updated',
+      actorUserId: context.userId,
+      organizationId: context.organizationId,
+      targetId: shipId,
+      metadata: { documentRequirementId: requirement.id, documentType: requirement.documentType },
+    });
+
     return toDocumentRequirementDto(requirement);
   }
 
@@ -705,9 +733,20 @@ export function createShipsService({
     shipId: string,
     documentRequirementId: string,
   ): Promise<void> {
-    await resolveOwnedDocumentRequirement(shipId, documentRequirementId);
+    const context = getRequestContext();
+    const existing = await resolveOwnedDocumentRequirement(shipId, documentRequirementId);
 
     await prisma.documentRequirement.delete({ where: { id: documentRequirementId } });
+
+    await auditLogger.record({
+      type: 'document.removed',
+      actorUserId: context.userId,
+      organizationId: context.organizationId,
+      targetId: shipId,
+      // documentType captured before delete — same reasoning as
+      // deleteShip's shipName above, the row is gone once this fires.
+      metadata: { documentRequirementId, documentType: existing.documentType },
+    });
   }
 
   return {

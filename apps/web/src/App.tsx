@@ -13,6 +13,7 @@ import {
   ReminderIcon,
   SettingsIcon,
   ShipIcon,
+  TimelineIcon,
   TruckIcon,
 } from './components/icons';
 import { CallEStatusPill } from './components/CallEStatusPill';
@@ -29,6 +30,7 @@ import { RecruitmentPage } from './features/recruitment/RecruitmentPage';
 import { RemindersPage } from './features/reminders/RemindersPage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { ShipsPage } from './features/ships/ShipsPage';
+import { TimelinePage } from './features/timeline/TimelinePage';
 import { useYellowZoneStatusCounts } from './features/yellow-zone/useYellowZone';
 import { YellowZonePage } from './features/yellow-zone/YellowZonePage';
 import { AuthProvider } from './lib/auth';
@@ -45,6 +47,7 @@ type Tab =
   | 'yellow-zone'
   | 'recruitment'
   | 'reminders'
+  | 'timeline'
   | 'notifications'
   | 'settings';
 
@@ -59,11 +62,12 @@ interface NavGroup {
   items: NavItem[];
 }
 
-// Grouped to match the Operations/Fleet/Campaigns/System structure of the
-// reference design (docs: see the "Kinvo UI redesign plan" memory) —
-// Intelligence isn't listed here yet because none of its pages exist
-// (Phase E), and an empty group heading with nothing under it would just
-// be dead chrome.
+// Grouped to match the Operations/Fleet/Campaigns/Intelligence/System
+// structure of the reference design (docs: see the "Kinvo UI redesign
+// plan" memory). Intelligence currently carries only Timeline — the first
+// of its four planned pages (Transcripts/Analytics/AI Insights are later
+// Phase E work) — so the group appears now rather than waiting for all
+// four, the same way Campaigns appeared with Recruitment+Reminders alone.
 const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Operations',
@@ -87,6 +91,10 @@ const NAV_GROUPS: NavGroup[] = [
       { key: 'recruitment', label: 'Recruitment', icon: RecruitIcon },
       { key: 'reminders', label: 'Reminders', icon: ReminderIcon },
     ],
+  },
+  {
+    title: 'Intelligence',
+    items: [{ key: 'timeline', label: 'Timeline', icon: TimelineIcon }],
   },
   {
     title: 'System',
@@ -322,6 +330,7 @@ function Shell() {
           {tab === 'yellow-zone' && <YellowZonePage onNavigate={navigate} />}
           {tab === 'recruitment' && <RecruitmentPage onNavigate={navigate} />}
           {tab === 'reminders' && <RemindersPage />}
+          {tab === 'timeline' && <TimelinePage />}
           {tab === 'notifications' && <NotificationsPage onNavigate={navigate} />}
           {tab === 'settings' && <SettingsPage />}
         </main>

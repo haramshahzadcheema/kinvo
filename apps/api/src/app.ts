@@ -19,6 +19,7 @@ import { createOrganizationsRouter } from './modules/organizations/organizations
 import { createPreferencesRouter } from './modules/preferences/preferences.routes';
 import { createRemindersRouter } from './modules/reminders/reminders.routes';
 import { createShipsRouter } from './modules/ships/ships.routes';
+import { createTimelineRouter } from './modules/timeline/timeline.routes';
 import { createVoiceRouters } from './modules/voice/voice.routes';
 import { createYellowZoneRouter } from './modules/yellow-zone/yellow-zone.routes';
 
@@ -91,6 +92,7 @@ export function createApp(container: Container): Express {
     '/api/v1/reminder-campaigns',
     createRemindersRouter(container.remindersService, authenticate),
   );
+  app.use('/api/v1/timeline', createTimelineRouter(container.timelineService, authenticate));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

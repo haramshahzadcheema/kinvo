@@ -3099,3 +3099,89 @@ confirmed to show the live confirmed-driver count while pending, and
 approved — confirmed to show the frozen snapshot count and approver name
 correctly, with the Approve/Cancel actions correctly disappearing once
 resolved.
+
+## UI redesign — Phase E (Intelligence): Timeline
+
+**Investigation before implementation:** `AuditLogEntry` (added in Phase
+3) has been write-only since it was built — `AuditLogger` exposes only
+`record()`, and no read endpoint over it existed anywhere in this
+codebase. All 33 (now 36) `AuditEventType` values are genuinely written
+somewhere, so Timeline is a real read path over real history, not new
+instrumentation pretending to be old. `AuditLogEntry.targetId` is
+heterogeneous by event type — `ship.*`/`document.*` point at the ship
+directly, `assignment.*` at the Assignment (requiring a join through
+`TruckRequirement.shipId` for a ship name), `yellow_zone.*` at the
+`YellowZoneItem` (requiring a join through `assignmentAttempt.assignment`
+for driver/ship names), `reminder_campaign.*` at the `ReminderCampaign`
+(a direct `shipId` FK) — so `timeline.service.ts` batch-resolves each
+group with one grouped query per entity type touched on a page, never
+N+1, then assembles a human `title`/`detail` per row.
+
+**Global, not per-ship:** the `Kinvo.dc.html` mockup's "Operations
+Timeline" is a single flat, org-wide feed (`timelineEvents` array), not a
+per-ship drill-down — confirmed before writing the query shape, since a
+per-ship version would have meant a different (and unnecessarily
+restrictive) design. `GET /api/v1/timeline` is a new top-level,
+read-only resource, gated by a new `timeline:read` RBAC action granted to
+all four roles including VIEWER — unlike every other action pair in
+`core/rbac/permissions.ts`, this has no `:manage` counterpart, since
+nothing is ever created or edited through Timeline itself, only surfaced
+from writes every other module already performs.
+
+**Document activity was a real gap, now closed:** per an explicit product
+decision when Transcripts turned out not to be a hard blocker (see
+below), `DocumentRequirement`'s service functions
+(`addDocumentRequirement`/`updateDocumentRequirement`/`removeDocumentRequirement`
+in `ships.service.ts`) previously made zero audit calls despite being
+real, ship-affecting mutations. Three new `AuditEventType` values
+(`document.added`/`document.updated`/`document.removed`) close that gap,
+targetId'd at the owning ship (matching `ship.updated`'s convention) with
+`documentRequirementId`/`documentType` in metadata. `ship.deleted` also
+gained a `shipName` in its metadata for the same reason `document.removed`
+carries its `documentType` — the row itself is gone by the time Timeline
+reads it back, so the display name has to be captured at write time, not
+resolved by a join that would find nothing.
+
+**Filtered to operational events only:** `auth.*`/`invitation.*`/
+`membership.*` are real `AuditLogEntry` rows too, but account plumbing
+("X logged in") is noise in a feed meant for reviewing ship/driver/call
+activity — `TIMELINE_EVENT_TYPES` in `timeline.service.ts` is an explicit
+allowlist, not "everything minus a blocklist," so a new account-level
+event type added later doesn't silently leak into the operational feed by
+default.
+
+**CALL-E transcript capability — investigated, found NOT to be a hard
+blocker:** the original Phase E plan flagged Transcripts as needing
+investigation into whether CALL-E's webhook payloads retain full
+conversation text. A first pass over this codebase's own integration
+(`CallEAdapter.ts`, `confirmationResultSchema.ts`,
+`assignmentAttemptSchema`) correctly found that no transcript text is
+stored or read anywhere today — `CONFIRMATION_RESULT_JSON_SCHEMA` is
+deliberately narrow (`confirmed: yes|no|unclear` only), by explicit
+design comment. That is accurate but incomplete: reading the installed
+`@call-e/calle` SDK's own type definitions (`dist/calls.d.ts`) directly
+showed that `CalleCalls.get(callId)` — which `CallEAdapter.getCallOutcome`
+already calls on every completed call — returns a `Call` object whose
+`recipients[].attempts[]` entries carry both `summary: string | null` and
+`transcriptTurns: CallTranscriptTurn[]` (`{ speaker: "bot"|"user"|
+"unknown", text: string }[]`). In other words: real transcript data is
+already being fetched from CALL-E's API today, on every call —
+`outcomeTranslation.ts`'s `translateCompletedCall` simply discards it
+after extracting the structured confirmation result. Transcripts is
+therefore "not currently used," not "not available" — building it for
+real would mean persisting `transcriptTurns`/`summary` on
+`AssignmentAttempt` (new columns, no new API calls) and building a real
+read/detail UI over them, not a second telephony integration. This
+finding is what's still open going into the rest of Phase E
+(Transcripts/Analytics/AI Insights) — Timeline itself does not depend on
+it.
+
+**Live verification performed:** the real events already on file from
+Phase D's own verification (ship created, driver added, driver invited,
+assignment confirmed, ship status changed, reminder campaign created,
+reminder campaign approved) were confirmed to render on the live Timeline
+page in newest-first order, each with its correct human title, a real
+resolved detail line (e.g. "Ahsan Raza — MSC Aurora (Salalah, Oman)" for
+the assignment events, "MSC Aurora" for the ship/reminder events), the
+correct actor name, and a real timestamp — no placeholder or synthesized
+row among them. 340 backend (+10) and 86 frontend (+7) tests passing.
