@@ -140,3 +140,21 @@ export function SearchIcon(props: SVGProps<SVGSVGElement>) {
     </Icon>
   );
 }
+
+export function RecruitIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="8" r="3" />
+      <path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6" />
+    </Icon>
+  );
+}
+
+export function ReminderIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7v5l3 2" />
+    </Icon>
+  );
+}

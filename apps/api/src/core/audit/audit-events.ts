@@ -27,7 +27,10 @@ export type AuditEventType =
   | 'yellow_zone.claimed'
   | 'yellow_zone.unclaimed'
   | 'yellow_zone.resolved'
-  | 'yellow_zone.dismissed';
+  | 'yellow_zone.dismissed'
+  | 'reminder_campaign.created'
+  | 'reminder_campaign.approved'
+  | 'reminder_campaign.cancelled';
 
 export interface AuditEvent {
   type: AuditEventType;

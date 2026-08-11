@@ -33,6 +33,11 @@ export const truckRequirementSchema = z.object({
   notes: z.string().nullable(),
   confirmedCount: z.number().int().nonnegative(),
   pendingCount: z.number().int().nonnegative(),
+  // Added for the Recruitment view (needed/confirmed/pending/rejected per
+  // destination) — REJECTED assignments were already tracked on Assignment
+  // itself, this just surfaces the aggregate the way confirmedCount/
+  // pendingCount already do. See loadRequirementCounts in ships.service.ts.
+  rejectedCount: z.number().int().nonnegative(),
 });
 export type TruckRequirementDto = z.infer<typeof truckRequirementSchema>;
 

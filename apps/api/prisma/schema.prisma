@@ -38,13 +38,14 @@ model Organization {
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 
-  memberships     Membership[]
-  invitations     Invitation[]
-  ships           Ship[]
-  drivers         Driver[]
-  assignments     Assignment[]
-  yellowZoneItems YellowZoneItem[]
-  notifications   Notification[]
+  memberships       Membership[]
+  invitations       Invitation[]
+  ships             Ship[]
+  drivers           Driver[]
+  assignments       Assignment[]
+  yellowZoneItems   YellowZoneItem[]
+  notifications     Notification[]
+  reminderCampaigns ReminderCampaign[]
 
   @@map("organizations")
 }
@@ -60,14 +61,16 @@ model User {
   updatedAt    DateTime   @updatedAt
   lastLoginAt  DateTime?
 
-  memberships            Membership[]
-  refreshTokens          RefreshToken[]
-  sentInvitations        Invitation[]        @relation("InvitationInvitedBy")
-  createdAssignments     Assignment[]        @relation("AssignmentCreatedBy")
-  recordedAttempts       AssignmentAttempt[] @relation("AssignmentAttemptRecordedBy")
-  claimedYellowZoneItems YellowZoneItem[]    @relation("YellowZoneItemAssignedTo")
-  notifications          Notification[]
-  preferences            UserPreferences?
+  memberships               Membership[]
+  refreshTokens             RefreshToken[]
+  sentInvitations           Invitation[]        @relation("InvitationInvitedBy")
+  createdAssignments        Assignment[]        @relation("AssignmentCreatedBy")
+  recordedAttempts          AssignmentAttempt[] @relation("AssignmentAttemptRecordedBy")
+  claimedYellowZoneItems    YellowZoneItem[]    @relation("YellowZoneItemAssignedTo")
+  notifications             Notification[]
+  preferences               UserPreferences?
+  createdReminderCampaigns  ReminderCampaign[]  @relation("ReminderCampaignCreatedBy")
+  approvedReminderCampaigns ReminderCampaign[]  @relation("ReminderCampaignApprovedBy")
 
   @@map("users")
 }
@@ -163,6 +166,7 @@ model Ship {
   truckRequirements    TruckRequirement[]
   documentRequirements DocumentRequirement[]
   currentDrivers       Driver[]              @relation("DriverCurrentShip")
+  reminderCampaigns    ReminderCampaign[]
 
   @@index([organizationId])
   @@index([organizationId, status])
@@ -714,6 +718,65 @@ model UserPreferences {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_preferences")
+}
+
+// Phase D (Kinvo UI redesign, Campaigns group): a pre-gate reminder call
+// request for a ship's already-confirmed drivers ("report 30 minutes
+// early") that a dispatcher creates and any manage-capable teammate
+// approves before it's considered sent — mirrors YellowZoneItem's
+// create/act-on-by-any-manage-role shape (see permissions.ts), not a
+// creator-only workflow. Deliberately does NOT duplicate gate/reportingTime
+// from Ship — those already live there; this only records the
+// campaign-specific facts (who created/approved it, when, and how many
+// drivers were confirmed at approval time).
+//
+// confirmedDriverCountAtApproval is a snapshot, not a derived value like
+// TruckRequirement's confirmedCount — "how many drivers were confirmed
+// when this reminder was sent" is a historical fact that must not change
+// if a driver is later added or withdrawn, unlike a live count. It's null
+// until approved by design (there's nothing to snapshot yet).
+//
+// No actual reminder call is placed by approving this — CALL-E's existing
+// call purpose is assignment outreach/confirmation, and building a second,
+// reminder-specific voice-call pathway is out of scope here (see the
+// Recruitment/Reminders investigation in docs/ARCHITECTURE.md). Approval
+// records a real, honest fact — "this was reviewed and confirmed necessary,
+// for N confirmed drivers" — not a claim that anyone was called.
+model ReminderCampaign {
+  id             String                 @id @default(cuid())
+  organizationId String
+  shipId         String
+  status         ReminderCampaignStatus @default(PENDING_APPROVAL)
+  notes          String?
+
+  createdByUserId                String
+  approvedByUserId               String?
+  approvedAt                     DateTime?
+  confirmedDriverCountAtApproval Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ship           Ship         @relation(fields: [shipId], references: [id], onDelete: Cascade)
+  // createdByUser: required FK, no onDelete override — matches
+  // Assignment.createdByUser's exact precedent (defaults to Restrict), not
+  // SetNull, since createdByUserId isn't nullable. approvedByUser: SetNull,
+  // matching YellowZoneItem.assignedToUser's exact precedent — it IS
+  // nullable, so "we no longer know who approved this" is an acceptable
+  // state if a user is later removed.
+  createdByUser  User         @relation("ReminderCampaignCreatedBy", fields: [createdByUserId], references: [id])
+  approvedByUser User?        @relation("ReminderCampaignApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@index([shipId])
+  @@map("reminder_campaigns")
+}
+
+enum ReminderCampaignStatus {
+  PENDING_APPROVAL
+  SENT
+  CANCELLED
 }
 
 // FontFamily's default is SYSTEM, not one of the three bundled fonts —

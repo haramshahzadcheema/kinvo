@@ -3005,3 +3005,97 @@ opt-out recipient exclusion, and concurrent-update semantics were proven
 by the automated backend suite (real Postgres, not mocked) rather than
 re-proven live, since those are exactly what that suite already exists to
 guarantee.
+
+## UI redesign — Phases A–D (shell, page reskins, Campaigns group)
+
+A visual redesign matching a reference mockup (`Kinvo.dc.html`, whose
+palette turned out to be byte-identical to this app's existing design
+tokens — almost certainly the original design source), executed in
+phases so each stayed independently reviewable and shippable. See the
+Kinvo UI redesign plan memory for the full phase breakdown and the
+explicit scope exclusions the user chose (no live ship-position map, no
+port switcher, no functional "Incoming calls" tab pending a separate SIP
+integration project).
+
+**Phase A (shell):** the flat 8-item sidebar became grouped sections
+(Operations/Fleet/Campaigns/System — Intelligence is listed in the plan
+but has no pages yet, so it's omitted rather than shown empty). The
+topbar gained three real, backend-driven additions, not decoration:
+`CallEStatusPill` (the existing `useActiveCalls()` query, already
+4s-polled while non-empty — shows an honest idle state, never a
+hardcoded number), `NotificationDropdown` (a second surface over the
+exact same notification hooks/mutations `NotificationsPage` already
+uses), and `GlobalSearch` (real `driversApi`/`shipsApi` `search` queries
+— deliberately scoped to only what's actually indexed; no fake
+calls/issues search).
+
+**Phase B (Operations reskin):** Dashboard, Calls, Yellow Zone restyled
+to the mono-numeral/rounded-2xl/pill-button visual language. Dashboard's
+"Upcoming ETAs" panel was consolidated with a new "Incoming vessels"
+list (real ships sorted by ETA) into a hero two-column layout — the
+user's chosen replacement for the excluded map. No new backend surface.
+
+**Phase C (Fleet reskin):** Ships, Drivers restyled the same way. Ship
+cards gained a real "Drivers confirmed X/Y" progress bar computed from
+data the page already fetches (`truckRequirements[].confirmedCount` /
+`quantityNeeded`), not a new query.
+
+**Phase D (Campaigns — Recruitment, Reminders):** before writing any
+code, an investigation confirmed "Recruitment" needed **no new Prisma
+model** — `TruckRequirement`/`Assignment` already carry
+needed/confirmed/pending per destination; the only gap was a
+`rejectedCount` aggregate (`Assignment.status = 'REJECTED'`, already
+stored per-row, just not summed). `loadRequirementCounts` in
+`ships.service.ts` now also groups on `REJECTED`, and
+`TruckRequirementDto` exposes `rejectedCount` alongside the existing two
+counts. `RecruitmentPage` is a pure re-slice of `useShips({ status:
+'RECRUITING' })` data already fetched elsewhere — clicking a campaign
+navigates to the Ships tab and reuses the existing invite/confirm/reject
+flow in `ShipDetailDrawer`, rather than building a second, parallel
+outreach UI.
+
+**Reminders is genuinely new** — the `ReminderCampaign` model
+(`reminder_campaigns` table, tenant-scoped via the same Prisma extension
+as `YellowZoneItem`) implements the approval-gate workflow discussed
+earlier in the roadmap: a dispatcher creates a campaign for a ship
+(`PENDING_APPROVAL`), and any manage-capable teammate approves or
+cancels it — ownership is tracked for accountability
+(`createdByUserId`/`approvedByUserId`) but does **not** gate who may
+act, mirroring `YellowZoneItem`'s claim/resolve precedent exactly rather
+than inventing a new any-manage-role-vs-creator-only distinction this
+codebase's 4-role RBAC was never designed to express (see
+`core/rbac/permissions.ts`'s own comment on why OWNER/ADMIN/DISPATCHER
+carry identical logistics permissions).
+
+Approving a campaign does **not** place any call. CALL-E's existing
+voice-call pathway is purpose-built for assignment outreach/confirmation
+(see the Voice Orchestration section above); building a second,
+reminder-specific telephony pathway was out of scope for this pass.
+Approval instead records a real, honest fact: `confirmedDriverCountAtApproval`
+is a point-in-time snapshot (via `Driver.count({ currentShipId,
+availability: 'CONFIRMED' })`), frozen at the moment of approval and
+never recomputed — deliberately distinct from `currentConfirmedDriverCount`
+on a still-`PENDING_APPROVAL` campaign, which stays live. The UI never
+claims "CALL-E called them"; it says "Approved by X for N confirmed
+drivers," which is exactly what happened.
+
+`reminders:read`/`reminders:manage` are a new RBAC action pair (same
+shape as `yellow-zone:*`), mounted at `/api/v1/reminder-campaigns`. A
+concurrency test (two simultaneous approvals of the same campaign)
+proved the conditional-`updateMany`-plus-affected-row-count pattern
+already established for Yellow Zone claim/Assignment confirm carries
+over correctly: exactly one request succeeds, the other gets a clean
+409, never a double-approval.
+
+**Live verification performed:** a real ship, driver, and confirmed
+assignment were created end-to-end through the actual UI (Ships →
+Drivers → invite → confirm), the ship was manually moved to `RECRUITING`
+(a deliberate, pre-existing manual gate in the ship status state machine
+— assignment creation does not auto-transition a ship out of `DRAFT`),
+and `RecruitmentPage` was confirmed to render the real
+needed/confirmed/pending/rejected counts and progress bar against that
+data. A reminder campaign was created for that ship through the real UI,
+confirmed to show the live confirmed-driver count while pending, and
+approved — confirmed to show the frozen snapshot count and approver name
+correctly, with the Approve/Cancel actions correctly disappearing once
+resolved.

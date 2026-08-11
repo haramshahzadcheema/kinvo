@@ -62,6 +62,11 @@ const TENANT_SCOPED_MODELS = new Set<Prisma.ModelName>([
   // cross-tenant leak, it does not stop one teammate from seeing
   // another's private notifications within the SAME organization.
   'Notification',
+  // Phase D: same shape as YellowZoneItem — a dispatcher's reminder
+  // campaign list is a direct top-level list/filter query on
+  // organizationId, not something reached only through an already-owned
+  // parent record.
+  'ReminderCampaign',
 ]);
 
 type ScopableArgs = {

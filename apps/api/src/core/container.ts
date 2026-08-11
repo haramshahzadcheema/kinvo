@@ -18,6 +18,10 @@ import {
   createPreferencesService,
   type PreferencesService,
 } from '../modules/preferences/preferences.service';
+import {
+  createRemindersService,
+  type RemindersService,
+} from '../modules/reminders/reminders.service';
 import { createShipsService, type ShipsService } from '../modules/ships/ships.service';
 import { createVoiceService, type VoiceService } from '../modules/voice/voice.service';
 import {
@@ -70,6 +74,7 @@ export interface Container {
   yellowZoneService: YellowZoneService;
   notificationService: NotificationService;
   preferencesService: PreferencesService;
+  remindersService: RemindersService;
   emitToOrganization: EmitToOrganization;
   emitToUser: EmitToUser;
 }
@@ -128,6 +133,7 @@ export function createContainer(): Container {
   const yellowZoneService = createYellowZoneService({ prisma, auditLogger, emitToOrganization });
   const notificationService = createNotificationService({ prisma, emitToUser });
   const preferencesService = createPreferencesService({ prisma });
+  const remindersService = createRemindersService({ prisma, auditLogger });
 
   const voiceService = createVoiceService({
     prisma,
@@ -154,6 +160,7 @@ export function createContainer(): Container {
     yellowZoneService,
     notificationService,
     preferencesService,
+    remindersService,
     emitToOrganization,
     emitToUser,
   };

@@ -23,7 +23,9 @@ export type Action =
   | 'drivers:read'
   | 'drivers:manage'
   | 'yellow-zone:read'
-  | 'yellow-zone:manage';
+  | 'yellow-zone:manage'
+  | 'reminders:read'
+  | 'reminders:manage';
 
 const ORGANIZATION_MANAGEMENT_ACTIONS: readonly Action[] = [
   'members:read',
@@ -57,14 +59,43 @@ const LOGISTICS_ACTIONS: readonly Action[] = [
 // conceptually part of.
 const YELLOW_ZONE_ACTIONS: readonly Action[] = ['yellow-zone:read', 'yellow-zone:manage'];
 
+// Reminders (Phase D) gets its own action pair, same reasoning as
+// YELLOW_ZONE_ACTIONS — creating/approving a reminder campaign is a
+// distinct capability from managing ships/drivers, and any manage-capable
+// role can act on any campaign (mirrors Yellow Zone's claim/resolve model:
+// ownership is tracked for accountability, not used to restrict who can
+// act — see the ReminderCampaign comment in schema.prisma).
+const REMINDER_ACTIONS: readonly Action[] = ['reminders:read', 'reminders:manage'];
+
 const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
-  OWNER: new Set([...ORGANIZATION_MANAGEMENT_ACTIONS, ...LOGISTICS_ACTIONS, ...YELLOW_ZONE_ACTIONS]),
-  ADMIN: new Set([...ORGANIZATION_MANAGEMENT_ACTIONS, ...LOGISTICS_ACTIONS, ...YELLOW_ZONE_ACTIONS]),
+  OWNER: new Set([
+    ...ORGANIZATION_MANAGEMENT_ACTIONS,
+    ...LOGISTICS_ACTIONS,
+    ...YELLOW_ZONE_ACTIONS,
+    ...REMINDER_ACTIONS,
+  ]),
+  ADMIN: new Set([
+    ...ORGANIZATION_MANAGEMENT_ACTIONS,
+    ...LOGISTICS_ACTIONS,
+    ...YELLOW_ZONE_ACTIONS,
+    ...REMINDER_ACTIONS,
+  ]),
   // DISPATCHER is the primary persona for ships/drivers AND Yellow Zone
   // resolution (ARCHITECTURE.md §7) — full manage access on both, but
   // still read-only on org membership.
-  DISPATCHER: new Set<Action>(['members:read', ...LOGISTICS_ACTIONS, ...YELLOW_ZONE_ACTIONS]),
-  VIEWER: new Set<Action>(['members:read', 'ships:read', 'drivers:read', 'yellow-zone:read']),
+  DISPATCHER: new Set<Action>([
+    'members:read',
+    ...LOGISTICS_ACTIONS,
+    ...YELLOW_ZONE_ACTIONS,
+    ...REMINDER_ACTIONS,
+  ]),
+  VIEWER: new Set<Action>([
+    'members:read',
+    'ships:read',
+    'drivers:read',
+    'yellow-zone:read',
+    'reminders:read',
+  ]),
 };
 
 export function hasPermission(role: Role, action: Action): boolean {

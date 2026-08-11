@@ -74,6 +74,7 @@ const VALID_TRANSITIONS: Record<ShipStatusValue, readonly ShipStatusValue[]> = {
 interface RequirementCounts {
   confirmedCount: number;
   pendingCount: number;
+  rejectedCount: number;
 }
 
 // Accepts either the outer tenant-scoped client or a mid-transaction `tx`
@@ -94,16 +95,23 @@ export async function loadRequirementCounts(
 
   const grouped = await prisma.assignment.groupBy({
     by: ['truckRequirementId', 'status'],
-    where: { truckRequirementId: { in: truckRequirementIds }, status: { in: ['CONFIRMED', 'PENDING'] } },
+    where: {
+      truckRequirementId: { in: truckRequirementIds },
+      status: { in: ['CONFIRMED', 'PENDING', 'REJECTED'] },
+    },
     _count: { _all: true },
   });
 
   for (const row of grouped) {
-    const entry = counts.get(row.truckRequirementId) ?? { confirmedCount: 0, pendingCount: 0 };
+    const entry =
+      counts.get(row.truckRequirementId) ??
+      { confirmedCount: 0, pendingCount: 0, rejectedCount: 0 };
     if (row.status === 'CONFIRMED') {
       entry.confirmedCount = row._count._all;
     } else if (row.status === 'PENDING') {
       entry.pendingCount = row._count._all;
+    } else if (row.status === 'REJECTED') {
+      entry.rejectedCount = row._count._all;
     }
     counts.set(row.truckRequirementId, entry);
   }
@@ -142,6 +150,7 @@ function toTruckRequirementDto(
     notes: req.notes,
     confirmedCount: counts?.confirmedCount ?? 0,
     pendingCount: counts?.pendingCount ?? 0,
+    rejectedCount: counts?.rejectedCount ?? 0,
   };
 }
 

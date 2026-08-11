@@ -9,6 +9,8 @@ import {
   DashboardIcon,
   MenuIcon,
   PhoneIcon,
+  RecruitIcon,
+  ReminderIcon,
   SettingsIcon,
   ShipIcon,
   TruckIcon,
@@ -23,6 +25,8 @@ import { DashboardPage } from './features/dashboard/DashboardPage';
 import { DriversPage } from './features/drivers/DriversPage';
 import { NotificationsPage } from './features/notifications/NotificationsPage';
 import { useUnreadCount } from './features/notifications/useNotifications';
+import { RecruitmentPage } from './features/recruitment/RecruitmentPage';
+import { RemindersPage } from './features/reminders/RemindersPage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { ShipsPage } from './features/ships/ShipsPage';
 import { useYellowZoneStatusCounts } from './features/yellow-zone/useYellowZone';
@@ -39,6 +43,8 @@ type Tab =
   | 'assignments'
   | 'calls'
   | 'yellow-zone'
+  | 'recruitment'
+  | 'reminders'
   | 'notifications'
   | 'settings';
 
@@ -53,11 +59,11 @@ interface NavGroup {
   items: NavItem[];
 }
 
-// Grouped to match the Operations/Fleet/System structure of the reference
-// design (docs: see the "Kinvo UI redesign plan" memory) — Campaigns and
-// Intelligence groups aren't listed here yet because none of their pages
-// exist (Phases D/E), and an empty group heading with nothing under it
-// would just be dead chrome.
+// Grouped to match the Operations/Fleet/Campaigns/System structure of the
+// reference design (docs: see the "Kinvo UI redesign plan" memory) —
+// Intelligence isn't listed here yet because none of its pages exist
+// (Phase E), and an empty group heading with nothing under it would just
+// be dead chrome.
 const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Operations',
@@ -73,6 +79,13 @@ const NAV_GROUPS: NavGroup[] = [
       { key: 'ships', label: 'Ships', icon: ShipIcon },
       { key: 'drivers', label: 'Drivers', icon: TruckIcon },
       { key: 'assignments', label: 'Assignments', icon: AssignmentIcon },
+    ],
+  },
+  {
+    title: 'Campaigns',
+    items: [
+      { key: 'recruitment', label: 'Recruitment', icon: RecruitIcon },
+      { key: 'reminders', label: 'Reminders', icon: ReminderIcon },
     ],
   },
   {
@@ -307,6 +320,8 @@ function Shell() {
           {tab === 'assignments' && <AssignmentsPage />}
           {tab === 'calls' && <CallsPage onNavigate={navigate} />}
           {tab === 'yellow-zone' && <YellowZonePage onNavigate={navigate} />}
+          {tab === 'recruitment' && <RecruitmentPage onNavigate={navigate} />}
+          {tab === 'reminders' && <RemindersPage />}
           {tab === 'notifications' && <NotificationsPage onNavigate={navigate} />}
           {tab === 'settings' && <SettingsPage />}
         </main>

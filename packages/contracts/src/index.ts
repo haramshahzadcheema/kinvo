@@ -172,6 +172,21 @@ export type {
 } from './yellowZone.schema';
 
 export {
+  reminderCampaignStatusSchema,
+  reminderCampaignSchema,
+  createReminderCampaignRequestSchema,
+  reminderCampaignListQuerySchema,
+  reminderCampaignListResponseSchema,
+} from './reminderCampaign.schema';
+export type {
+  ReminderCampaignStatusValue,
+  ReminderCampaignDto,
+  CreateReminderCampaignRequest,
+  ReminderCampaignListQuery,
+  ReminderCampaignListResponse,
+} from './reminderCampaign.schema';
+
+export {
   notificationTypeSchema,
   notificationTargetTypeSchema,
   notificationSchema,
