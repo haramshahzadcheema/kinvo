@@ -36,7 +36,12 @@ import {
 } from '../modules/yellow-zone/yellow-zone.service';
 import { createAuditLogger, type AuditLogger } from './audit/audit-logger';
 import { logger } from './logger';
-import { createRealtimeEmitter, type EmitToOrganization, type EmitToUser } from './realtime/emitter';
+import {
+  createRealtimeEmitter,
+  type DisconnectUser,
+  type EmitToOrganization,
+  type EmitToUser,
+} from './realtime/emitter';
 import { checkDatabaseConnection, prisma } from './prisma';
 import { checkRedisConnection, redis } from './redis';
 import { hashPassword, verifyPassword } from './security/password';
@@ -86,6 +91,7 @@ export interface Container {
   insightsService: InsightsService;
   emitToOrganization: EmitToOrganization;
   emitToUser: EmitToUser;
+  disconnectUser: DisconnectUser;
 }
 
 export function createContainer(): Container {
@@ -110,12 +116,23 @@ export function createContainer(): Container {
     auditLogger,
   });
 
+  // Publish-only — see emitter.ts for why this is deliberately independent
+  // of the Socket.io server itself (server.ts constructs that separately,
+  // once it has an http.Server to attach to; this container is built
+  // before that exists, and worker.ts never has one at all). Constructed
+  // before organizationsService (moved up from its original spot further
+  // down) specifically so `disconnectUser` can be injected there — a role
+  // change or removal needs to reach any already-connected socket, not
+  // just future ones.
+  const { emitToOrganization, emitToUser, disconnectUser } = createRealtimeEmitter();
+
   const organizationsService = createOrganizationsService({
     prisma,
     generateInvitationTokenValue,
     hashInvitationTokenValue,
     auditLogger,
     tokenRevocationStore,
+    disconnectUser,
   });
 
   const shipsService = createShipsService({ prisma, auditLogger });
@@ -132,12 +149,6 @@ export function createContainer(): Container {
     env.NODE_ENV === 'test'
       ? createFakeVoiceProvider()
       : createCallEAdapter({ apiKey: requireCalleApiKey(), baseUrl: env.CALLE_BASE_URL });
-
-  // Publish-only — see emitter.ts for why this is deliberately independent
-  // of the Socket.io server itself (server.ts constructs that separately,
-  // once it has an http.Server to attach to; this container is built
-  // before that exists, and worker.ts never has one at all).
-  const { emitToOrganization, emitToUser } = createRealtimeEmitter();
 
   const yellowZoneService = createYellowZoneService({ prisma, auditLogger, emitToOrganization });
   const notificationService = createNotificationService({ prisma, emitToUser });
@@ -178,5 +189,6 @@ export function createContainer(): Container {
     insightsService,
     emitToOrganization,
     emitToUser,
+    disconnectUser,
   };
 }

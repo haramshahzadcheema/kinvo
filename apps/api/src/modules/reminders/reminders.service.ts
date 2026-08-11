@@ -86,9 +86,7 @@ export function createRemindersService({
   async function listReminderCampaigns(
     query: ReminderCampaignListQuery,
   ): Promise<ReminderCampaignListResponse> {
-    const where: Prisma.ReminderCampaignWhereInput = query.status
-      ? { status: query.status }
-      : {};
+    const where: Prisma.ReminderCampaignWhereInput = query.status ? { status: query.status } : {};
 
     const [campaigns, total] = await Promise.all([
       prisma.reminderCampaign.findMany({
@@ -131,7 +129,15 @@ export function createRemindersService({
     // One live campaign per ship at a time — a second "report 30 minutes
     // early" request for a ship that already has one pending review would
     // just be duplicate noise for whoever approves it, not a meaningful
-    // second reminder.
+    // second reminder. This check is a courtesy, not a guarantee — two
+    // concurrent requests for the same ship can both pass it before either
+    // commits, same class of bug as registerOrganization/acceptInvitation
+    // in auth.service.ts. The real guarantee is the partial unique index
+    // from the reminder_campaigns_pending_unique migration
+    // (`reminder_campaigns_one_pending_per_ship`, on shipId WHERE
+    // status = 'PENDING_APPROVAL'); the loser of that race hits it below
+    // and gets the same clean 409 this up-front check gives a
+    // non-concurrent duplicate.
     const existing = await prisma.reminderCampaign.findFirst({
       where: { shipId: input.shipId, status: 'PENDING_APPROVAL' },
     });
@@ -139,15 +145,23 @@ export function createRemindersService({
       throw new ValidationError('This ship already has a reminder campaign awaiting approval.');
     }
 
-    const created = await prisma.reminderCampaign.create({
-      data: {
-        organizationId: context.organizationId,
-        shipId: input.shipId,
-        notes: input.notes ?? null,
-        createdByUserId: context.userId,
-      },
-      include: REMINDER_CAMPAIGN_INCLUDE,
-    });
+    let created: ReminderCampaignWithContext;
+    try {
+      created = await prisma.reminderCampaign.create({
+        data: {
+          organizationId: context.organizationId,
+          shipId: input.shipId,
+          notes: input.notes ?? null,
+          createdByUserId: context.userId,
+        },
+        include: REMINDER_CAMPAIGN_INCLUDE,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictError('This ship already has a reminder campaign awaiting approval.');
+      }
+      throw error;
+    }
 
     await auditLogger.record({
       type: 'reminder_campaign.created',

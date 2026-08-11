@@ -246,6 +246,47 @@ describe('POST /api/v1/auth/refresh — rotation', () => {
     expect(serverErrors).toHaveLength(0);
     expect(responses.filter((r) => r.status !== 200).every((r) => r.status === 401)).toBe(true);
   });
+
+  it('the one winning token from a concurrent reuse race does not survive the losers’ family revocation', async () => {
+    // A second, stronger regression test for the same concurrent scramble
+    // as above, but proving the specific gap the non-transactional version
+    // of refresh() still had even after the atomic-claim fix: each losing
+    // request, on detecting reuse, revokes every currently-unrevoked token
+    // in the family — but with the claim and the winner's new-token INSERT
+    // as separate auto-committing statements, a loser's sweep could run (and
+    // commit) in the gap between "winner's claim committed" and "winner's
+    // new token inserted," querying `revokedAt: null` before that new token
+    // existed to be caught. The new token would then be created moments
+    // later as a live, usable token in a family every other request was just
+    // told had been fully revoked. Wrapping the claim through the new-token
+    // creation in one transaction (so the row lock — and therefore every
+    // loser's blocked claim attempt — doesn't release until the new token is
+    // already committed) closes it. This test proves the winner's own new
+    // token is unusable afterward, not just that only one request succeeded.
+    const app = buildApp();
+    const payload = registrationPayload();
+    const registerResponse = await request(app)
+      .post('/api/v1/auth/register-organization')
+      .send(payload);
+    const originalRefreshToken = extractRefreshTokenCookie(registerResponse);
+    const cookie = cookieHeader(originalRefreshToken);
+
+    const CONCURRENCY = 10;
+    const responses = await Promise.all(
+      Array.from({ length: CONCURRENCY }, () =>
+        request(app).post('/api/v1/auth/refresh').set('Cookie', cookie),
+      ),
+    );
+
+    const winner = responses.find((r) => r.status === 200);
+    expect(winner).toBeDefined();
+    const winningNewToken = extractRefreshTokenCookie(winner!);
+
+    const replayOfWinningToken = await request(app)
+      .post('/api/v1/auth/refresh')
+      .set('Cookie', cookieHeader(winningNewToken));
+    expect(replayOfWinningToken.status).toBe(401);
+  });
 });
 
 describe('POST /api/v1/auth/logout', () => {

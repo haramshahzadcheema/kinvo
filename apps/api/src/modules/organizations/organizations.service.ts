@@ -11,6 +11,7 @@ import type { AuditLogger } from '../../core/audit/audit-logger';
 import { ConflictError, NotFoundError } from '../../core/errors/AppError';
 import type { prisma as prismaClient, TransactionClient } from '../../core/prisma';
 import { getRequestContext } from '../../core/request-context';
+import type { DisconnectUser } from '../../core/realtime/emitter';
 import type { TokenRevocationStore } from '../../core/security/token-revocation';
 
 const INVITATION_TTL_DAYS = 7;
@@ -21,6 +22,7 @@ export interface OrganizationsServiceDependencies {
   hashInvitationTokenValue: (rawValue: string) => string;
   auditLogger: AuditLogger;
   tokenRevocationStore: TokenRevocationStore;
+  disconnectUser: DisconnectUser;
 }
 
 export interface OrganizationsService {
@@ -51,6 +53,7 @@ export function createOrganizationsService({
   hashInvitationTokenValue,
   auditLogger,
   tokenRevocationStore,
+  disconnectUser,
 }: OrganizationsServiceDependencies): OrganizationsService {
   // Takes a row-level lock on every active-owner membership in this
   // organization before counting them, for the life of the enclosing
@@ -128,14 +131,23 @@ export function createOrganizationsService({
     });
 
     // Any access token already issued for this membership still carries the
-    // old role for up to JWT_ACCESS_TTL unless explicitly revoked — see
-    // core/security/token-revocation.ts. Only called when the role
-    // genuinely changed, matching assertNotLastOwnerLocked's guard above:
-    // a no-op "change" to the same role has nothing stale to invalidate,
-    // and would otherwise force a redundant token refresh on every device
-    // this member is signed in on.
+    // old role until explicitly revoked — see core/security/token-revocation.ts.
+    // Only called when the role genuinely changed, matching
+    // assertNotLastOwnerLocked's guard above: a no-op "change" to the same
+    // role has nothing stale to invalidate, and would otherwise force a
+    // redundant token refresh (and socket disconnect) on every device this
+    // member is signed in on.
+    //
+    // disconnectUser closes the gap token revocation alone leaves open: a
+    // REST request re-authenticates on every call (so the revoked token
+    // check runs immediately), but a Socket.io connection only
+    // authenticates once, at connect time — an already-open socket would
+    // otherwise keep receiving org-wide realtime events under the member's
+    // old role for as long as the browser tab stayed open. See
+    // socketServer.ts's own doc comment for the fuller reasoning.
     if (previousRole !== role) {
       await tokenRevocationStore.revokeMembership(membershipId);
+      disconnectUser(updated.userId);
     }
 
     await auditLogger.record({
@@ -161,7 +173,7 @@ export function createOrganizationsService({
   async function removeMember(membershipId: string): Promise<void> {
     const context = getRequestContext();
 
-    await prisma.$transaction(async (tx) => {
+    const { userId } = await prisma.$transaction(async (tx) => {
       const target = await tx.membership.findFirst({
         where: { id: membershipId, status: 'ACTIVE' },
       });
@@ -172,14 +184,20 @@ export function createOrganizationsService({
       await assertNotLastOwnerLocked(tx, context.organizationId, membershipId, target.role);
 
       await tx.membership.update({ where: { id: membershipId }, data: { status: 'REMOVED' } });
+
+      return { userId: target.userId };
     });
 
     // Unconditional, unlike the role-change guard above — removal always
     // represents a genuine access change, and refresh() (auth.service.ts)
     // will correctly reject this membership's refresh token on its next
     // use once status is REMOVED, but the still-live access token needs
-    // this to stop working before its own exp.
+    // this to stop working before its own exp. disconnectUser is the same
+    // socket-side closure as updateMemberRole's — see that call site's
+    // comment for why token revocation alone doesn't cover an
+    // already-connected socket.
     await tokenRevocationStore.revokeMembership(membershipId);
+    disconnectUser(userId);
 
     await auditLogger.record({
       type: 'membership.removed',

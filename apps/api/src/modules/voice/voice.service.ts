@@ -14,15 +14,16 @@ import type { NotificationService } from '../notifications/notification.service'
 import type { YellowZoneService } from '../yellow-zone/yellow-zone.service';
 import { env } from '../../config/env';
 import { ConflictError, NotFoundError } from '../../core/errors/AppError';
-import type {
-  PlaceVoiceCallJobData,
-  ProcessVoiceWebhookJobData,
-} from '../../core/queue/queues';
+import type { PlaceVoiceCallJobData, ProcessVoiceWebhookJobData } from '../../core/queue/queues';
 import { placeVoiceCallJobId, voiceCallsQueue } from '../../core/queue/queues';
 import type { prisma as prismaClient } from '../../core/prisma';
 import { withoutTenantScope } from '../../core/prisma';
 import type { EmitToOrganization, EmitToUser } from '../../core/realtime/emitter';
-import { getRequestContext, runWithRequestContext, type RequestContext } from '../../core/request-context';
+import {
+  getRequestContext,
+  runWithRequestContext,
+  type RequestContext,
+} from '../../core/request-context';
 import type { VoiceCallOutcome, VoiceProvider } from '../../core/voice/VoiceProvider';
 
 export interface VoiceServiceDependencies {
@@ -323,18 +324,14 @@ export function createVoiceService({
           .map((m) => m.userId)
           .filter((userId) => !optedOutUserIds.has(userId));
 
-        notifications = await notificationService.createForRecipients(
-          tx,
-          recipientUserIds,
-          {
-            organizationId: context.organizationId,
-            type: 'YELLOW_ZONE_ESCALATED',
-            title: `New escalation: ${escalation.driverName}`,
-            message: `${escalation.shipName} · ${escalation.destination} — ${escalation.reason}`,
-            targetType: 'YELLOW_ZONE_ITEM',
-            targetId: escalation.id,
-          },
-        );
+        notifications = await notificationService.createForRecipients(tx, recipientUserIds, {
+          organizationId: context.organizationId,
+          type: 'YELLOW_ZONE_ESCALATED',
+          title: `New escalation: ${escalation.driverName}`,
+          message: `${escalation.shipName} · ${escalation.destination} — ${escalation.reason}`,
+          targetType: 'YELLOW_ZONE_ITEM',
+          targetId: escalation.id,
+        });
       }
 
       return created;
@@ -421,7 +418,11 @@ export function createVoiceService({
       // still lose the same externalCallId race described above, since it
       // writes the same unique column.
       const fallbackOutcome =
-        outcome.kind === 'confirmed' ? 'CONFIRMED' : outcome.kind === 'declined' ? 'REJECTED' : 'SYSTEM_ERROR';
+        outcome.kind === 'confirmed'
+          ? 'CONFIRMED'
+          : outcome.kind === 'declined'
+            ? 'REJECTED'
+            : 'SYSTEM_ERROR';
       try {
         await assignmentsService.logAttempt(
           assignmentId,
@@ -506,11 +507,32 @@ export function createVoiceService({
     // mistaken for a replay of the first.
     const priorPlacementCount = await prisma.voiceCallPlacement.count({ where: { assignmentId } });
     const callAttemptRef = `${assignmentId}:${priorPlacementCount}`;
+    const jobId = placeVoiceCallJobId(callAttemptRef);
+
+    // A job that permanently exhausted its retries (all 5 attempts failed —
+    // see queues.ts's defaultJobOptions) stays in Redis under this exact
+    // deterministic id for up to removeOnFail's 7-day retention window.
+    // BullMQ's own dedup-by-id would otherwise silently swallow a
+    // legitimate retry request for the rest of that window: this endpoint
+    // would still return 202 "queued," but nothing would actually be
+    // enqueued, because a job with this id already exists — it's just
+    // dead. No VoiceCallPlacement row gets created on a failed attempt, so
+    // priorPlacementCount (and therefore callAttemptRef/jobId) stays
+    // identical on every retry until this is cleared, making the retry
+    // request collide with the same corpse every time. Only a genuinely
+    // dead (exhausted-retries) job is removed here — one still
+    // waiting/active/delayed is left untouched, which is the real,
+    // intended dedup case: a second concurrent enqueue for the same round
+    // should still collapse into the one already in flight.
+    const existingJob = await voiceCallsQueue.getJob(jobId);
+    if (existingJob && (await existingJob.isFailed())) {
+      await existingJob.remove();
+    }
 
     await voiceCallsQueue.add(
       'place-call',
       { assignmentId, organizationId: context.organizationId, callAttemptRef },
-      { jobId: placeVoiceCallJobId(callAttemptRef) },
+      { jobId },
     );
   }
 

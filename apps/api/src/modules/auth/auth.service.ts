@@ -248,44 +248,123 @@ export function createAuthService({
 
   async function refresh(rawRefreshToken: string, meta: RequestMeta): Promise<AuthResult> {
     const tokenHash = hashRefreshTokenValue(rawRefreshToken);
-    const existingToken = await prisma.refreshToken.findUnique({ where: { tokenHash } });
 
-    if (!existingToken) {
-      throw new UnauthorizedError('Invalid refresh token.');
-    }
+    // Everything from the claim through creating the replacement token runs
+    // inside ONE transaction, not as separate auto-committing statements.
+    // That matters for a race the previous (non-transactional) version of
+    // this function still had: the claim UPDATE below takes a Postgres row
+    // lock on the presented token's row, but with each statement as its own
+    // implicit transaction, that lock was released the instant the claim
+    // committed — *before* the replacement token existed. A concurrent
+    // replay of the same (now-claimed) token would then run its own
+    // family-wide revocation sweep in the gap between "claim committed" and
+    // "replacement token inserted," and that sweep — querying
+    // `revokedAt: null` at that moment — could not possibly catch a row
+    // that didn't exist yet. The replacement token would then be inserted
+    // moments later as a live, usable token in a family the client was just
+    // told had been "fully revoked." Confirmed reachable, not just
+    // theoretical: two requests presenting the same token, one delayed just
+    // long enough to land in that gap.
+    //
+    // Wrapping just the token claim + replacement-token creation in a
+    // single transaction closes it (deliberately NOT the user/membership/
+    // organization lookups below — those are plain reads that don't affect
+    // this property, and `RefreshToken`/`User` are both outside the
+    // tenant-scoping extension's allowlist per core/prisma.ts, but
+    // `Membership` is on it and requires a bound request context this
+    // pre-authentication flow doesn't have — reusing `resolveActiveMembership`
+    // unchanged, outside the transaction, avoids that entirely). The row
+    // lock now lives for the whole transaction, so a concurrent replay's
+    // own claim attempt on the same row blocks until this transaction
+    // commits or rolls back. By the time that blocked attempt proceeds (and
+    // correctly finds revokedAt already set, `claim.count === 0`), the
+    // replacement token this transaction created is already committed and
+    // visible — so the replay's own family-revocation sweep, querying
+    // `revokedAt: null` fresh, now genuinely catches it too. Postgres's
+    // default Read Committed isolation is sufficient for this: it still
+    // honors row-level locks on UPDATE, which is the only guarantee this
+    // fix relies on.
+    //
+    // The callback returns a discriminated result instead of throwing for
+    // its "reuse detected" and "not found"/"expired" cases — Prisma's
+    // interactive transactions roll back every write the callback made the
+    // moment it throws, which would have silently undone the family-wide
+    // revocation sweep right after performing it (caught by this file's own
+    // reuse-detection test: the revoked family didn't stay revoked). Real
+    // outcomes are decided, and thrown, only after the transaction has
+    // actually committed.
+    const rotationResult = await prisma.$transaction(async (tx) => {
+      const existingToken = await tx.refreshToken.findUnique({ where: { tokenHash } });
 
-    if (existingToken.expiresAt < new Date()) {
-      throw new UnauthorizedError('Refresh token is expired or revoked.');
-    }
+      if (!existingToken) {
+        return { kind: 'not-found' as const };
+      }
 
-    // Atomically claim the token: this update only matches (and only one
-    // concurrent request can win it) if revokedAt is still null. Two
-    // simultaneous refresh calls presenting the same token used to both
-    // pass a plain read-then-check here, both proceed to mint a new token,
-    // and both "win" — confirmed empirically under concurrency (3 successes
-    // out of 15 concurrent requests against the live stack, with two
-    // simultaneously-unrevoked tokens left in the database). The
-    // WHERE-guarded updateMany serializes on Postgres's row lock: the
-    // loser's WHERE no longer matches once the winner's revokedAt commits,
-    // so claim.count is 0 for every request except the first.
-    const claim = await prisma.refreshToken.updateMany({
-      where: { id: existingToken.id, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
+      if (existingToken.expiresAt < new Date()) {
+        return { kind: 'expired' as const };
+      }
 
-    if (claim.count === 0) {
-      // Lost the race against a concurrent refresh, or this token was
-      // already revoked by a prior rotation/reuse event. Either way,
-      // presenting a non-active token is a reuse/theft signal: revoke the
-      // entire family, forcing re-login on every device sharing it.
-      await prisma.refreshToken.updateMany({
-        where: { familyId: existingToken.familyId, revokedAt: null },
+      // Atomically claim the token: this update only matches (and only one
+      // concurrent request can win it) if revokedAt is still null — see
+      // docs/ARCHITECTURE.md's Decisions log for the empirical confirmation
+      // this specific guard closes (3 successes out of 15 concurrent
+      // requests against the live stack before it existed).
+      const claim = await tx.refreshToken.updateMany({
+        where: { id: existingToken.id, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+
+      if (claim.count === 0) {
+        // Lost the race against a concurrent refresh, or this token was
+        // already revoked by a prior rotation/reuse event. Either way,
+        // presenting a non-active token is a reuse/theft signal: revoke the
+        // entire family, forcing re-login on every device sharing it.
+        // Running inside this same transaction is what guarantees this
+        // sweep sees a concurrent winner's already-committed replacement
+        // token (see the function-level comment above) — this UPDATE
+        // itself blocked on the winner's row lock until that commit.
+        await tx.refreshToken.updateMany({
+          where: { familyId: existingToken.familyId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        return { kind: 'reuse' as const };
+      }
+
+      const rawNewRefreshToken = generateRefreshTokenValue();
+      const newToken = await tx.refreshToken.create({
+        data: {
+          userId: existingToken.userId,
+          tokenHash: hashRefreshTokenValue(rawNewRefreshToken),
+          familyId: existingToken.familyId,
+          userAgent: meta.userAgent,
+          ip: meta.ip,
+          expiresAt: refreshTokenExpiryDate(),
+        },
+      });
+
+      // revokedAt was already set atomically by the claim step above — only
+      // replacedByTokenId needs setting now that the new token's id exists.
+      await tx.refreshToken.update({
+        where: { id: existingToken.id },
+        data: { replacedByTokenId: newToken.id },
+      });
+
+      return { kind: 'rotated' as const, existingToken, rawNewRefreshToken };
+    });
+
+    if (rotationResult.kind === 'not-found') {
+      throw new UnauthorizedError('Invalid refresh token.');
+    }
+    if (rotationResult.kind === 'expired') {
+      throw new UnauthorizedError('Refresh token is expired or revoked.');
+    }
+    if (rotationResult.kind === 'reuse') {
       throw new UnauthorizedError(
         'Refresh token reuse detected; all sessions for this login have been revoked.',
       );
     }
+
+    const { existingToken, rawNewRefreshToken } = rotationResult;
 
     const user = await prisma.user.findUniqueOrThrow({ where: { id: existingToken.userId } });
     const membership = await resolveActiveMembership(user.id);
@@ -294,27 +373,6 @@ export function createAuthService({
     }
     const organization = await prisma.organization.findUniqueOrThrow({
       where: { id: membership.organizationId },
-    });
-
-    const rawNewRefreshToken = generateRefreshTokenValue();
-    const newTokenHash = hashRefreshTokenValue(rawNewRefreshToken);
-
-    const newToken = await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        tokenHash: newTokenHash,
-        familyId: existingToken.familyId,
-        userAgent: meta.userAgent,
-        ip: meta.ip,
-        expiresAt: refreshTokenExpiryDate(),
-      },
-    });
-
-    // revokedAt was already set atomically by the claim step above — only
-    // replacedByTokenId needs setting now that the new token's id exists.
-    await prisma.refreshToken.update({
-      where: { id: existingToken.id },
-      data: { replacedByTokenId: newToken.id },
     });
 
     const accessToken = signAccessToken({

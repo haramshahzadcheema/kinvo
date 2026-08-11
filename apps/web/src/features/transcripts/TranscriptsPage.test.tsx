@@ -44,8 +44,11 @@ const callWithoutTranscript: ResolvedVoiceCallDto = {
   transcriptTurns: [],
 };
 
-function callList(items: ResolvedVoiceCallDto[]): VoiceCallListResponse {
-  return { items, page: 1, pageSize: 100, total: items.length, totalPages: 1 };
+function callList(
+  items: ResolvedVoiceCallDto[],
+  overrides: Partial<Omit<VoiceCallListResponse, 'items'>> = {},
+): VoiceCallListResponse {
+  return { items, page: 1, pageSize: 100, total: items.length, totalPages: 1, ...overrides };
 }
 
 function renderPage() {
@@ -63,7 +66,9 @@ afterEach(() => {
 
 describe('TranscriptsPage', () => {
   it('lists only calls that have a transcript — a resolved call with none is excluded', async () => {
-    mockedVoiceCallsApi.list.mockResolvedValue(callList([callWithTranscript, callWithoutTranscript]));
+    mockedVoiceCallsApi.list.mockResolvedValue(
+      callList([callWithTranscript, callWithoutTranscript]),
+    );
     renderPage();
 
     // "Ahsan Raza" legitimately appears twice once selected — the list row
@@ -111,5 +116,56 @@ describe('TranscriptsPage', () => {
     fireEvent.click(screen.getByText('Zara Ahmed'));
     expect(await screen.findByText('Driver declined.')).toBeInTheDocument();
     expect(screen.queryByText('Driver confirmed the job.')).not.toBeInTheDocument();
+  });
+
+  it('a call beyond the first page is reachable via "Load older calls", not silently capped', async () => {
+    const older: ResolvedVoiceCallDto = {
+      ...callWithTranscript,
+      id: 'att-old',
+      driverName: 'Older Driver',
+      transcriptSummary: 'An older call.',
+    };
+    mockedVoiceCallsApi.list.mockImplementation((params) => {
+      const page = params?.page ?? 1;
+      return Promise.resolve(
+        page === 1
+          ? callList([callWithTranscript], { page: 1, total: 2, totalPages: 2 })
+          : callList([older], { page: 2, total: 2, totalPages: 2 }),
+      );
+    });
+    renderPage();
+
+    await screen.findAllByText('Ahsan Raza');
+    expect(screen.queryByText('Older Driver')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load older calls' }));
+
+    // Appears in both the list row and (once auto-selected) the detail
+    // pane heading — same reasoning as the very first test in this file.
+    expect((await screen.findAllByText('Older Driver')).length).toBeGreaterThan(0);
+    expect(mockedVoiceCallsApi.list).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }));
+  });
+
+  it('an empty first page with more pages offers "Check older calls" instead of a dead-end empty state', async () => {
+    const older: ResolvedVoiceCallDto = {
+      ...callWithTranscript,
+      id: 'att-old',
+      driverName: 'Older Driver',
+    };
+    mockedVoiceCallsApi.list.mockImplementation((params) => {
+      const page = params?.page ?? 1;
+      return Promise.resolve(
+        page === 1
+          ? callList([callWithoutTranscript], { page: 1, total: 2, totalPages: 2 })
+          : callList([older], { page: 2, total: 2, totalPages: 2 }),
+      );
+    });
+    renderPage();
+
+    expect(await screen.findByText('No transcripts yet')).toBeInTheDocument();
+    expect(screen.getByText(/most recent resolved calls/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check older calls' }));
+    expect((await screen.findAllByText('Older Driver')).length).toBeGreaterThan(0);
   });
 });

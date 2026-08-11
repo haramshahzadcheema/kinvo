@@ -1,6 +1,37 @@
 import { z } from 'zod';
+import { REVOCATION_TTL_SECONDS } from '../core/security/token-revocation';
 
-const envSchema = z
+// Mirrors exactly the shapes JWT_ACCESS_TTL's own regex below already
+// accepts ("15m", "1h", "2.5d", or a bare number of seconds) — kept as a
+// small local parser rather than a dependency on the `ms` package (which
+// jsonwebtoken itself uses internally, but only as a transitive dependency
+// apps/api never declares directly) purely to compare the configured value
+// against REVOCATION_TTL_SECONDS below.
+const DURATION_UNIT_SECONDS: Record<string, number> = {
+  ms: 0.001,
+  s: 1,
+  m: 60,
+  h: 60 * 60,
+  d: 60 * 60 * 24,
+  w: 60 * 60 * 24 * 7,
+  y: 60 * 60 * 24 * 365.25,
+};
+
+function parseDurationToSeconds(value: string): number {
+  const match = /^(\d+(?:\.\d+)?)\s?(ms|s|m|h|d|w|y)$/i.exec(value);
+  if (!match || !match[1] || !match[2]) {
+    return Number(value); // The bare-seconds shape — the only other form the regex below allows.
+  }
+  const unitSeconds = DURATION_UNIT_SECONDS[match[2].toLowerCase()] ?? 0;
+  return Number(match[1]) * unitSeconds;
+}
+
+// Exported alongside `env` (not just used internally by loadEnv) so a unit
+// test can exercise `.safeParse` directly against a synthetic payload —
+// `env` itself is a module-load-time singleton built from the real
+// `process.env` that calls `process.exit(1)` on failure, which isn't
+// something a test should trigger just to prove a validation rule works.
+export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: z.coerce.number().int().positive().default(4000),
@@ -44,6 +75,22 @@ const envSchema = z
   .refine((data) => data.NODE_ENV === 'test' || Boolean(data.CALLE_API_KEY), {
     message: 'CALLE_API_KEY is required outside the test environment.',
     path: ['CALLE_API_KEY'],
+  })
+  // The membership-revocation denylist (core/security/token-revocation.ts)
+  // stores each revocation for a fixed REVOCATION_TTL_SECONDS, on the
+  // assumption that no access token issued before it could still be alive
+  // once that entry expires. That assumption is only true if access tokens
+  // themselves never outlive the denylist entry — nothing about the JWT
+  // format or jsonwebtoken's `expiresIn` option enforces that on its own,
+  // so a JWT_ACCESS_TTL configured longer than REVOCATION_TTL_SECONDS would
+  // silently let a revoked membership's already-issued tokens start working
+  // again the moment the (now-expired) denylist entry falls out of Redis,
+  // even though the token itself is still technically unexpired. Caught
+  // here, at startup, rather than left as a runbook footnote an operator
+  // could misconfigure past.
+  .refine((data) => parseDurationToSeconds(data.JWT_ACCESS_TTL) <= REVOCATION_TTL_SECONDS, {
+    message: `JWT_ACCESS_TTL must not exceed ${REVOCATION_TTL_SECONDS} seconds (the membership-revocation denylist's TTL) — a longer access-token lifetime would let a revoked membership's already-issued tokens start working again once the denylist entry expires first.`,
+    path: ['JWT_ACCESS_TTL'],
   });
 
 export type Env = z.infer<typeof envSchema>;

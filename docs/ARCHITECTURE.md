@@ -481,7 +481,7 @@ modules/voice/
   deliberately hides every CALL-E-specific concept (Calls vs. Goal Runs,
   recipients, `structured_result`, ...) behind Kinvo's own 6-state
   `VoiceCallOutcome` vocabulary (`confirmed | declined | unreachable |
-  ambiguous | system_error | pending`).
+ambiguous | system_error | pending`).
 - **Webhooks carry no signature.** Verified three independent ways during
   the spike (the current docs, a dated changelog entry, and a
   `@deprecated` HMAC verifier still shipped in the SDK with an explicit
@@ -623,7 +623,7 @@ nothing else.
 
 Workers run as a separate process/container from the API, exactly as
 planned back in Phase 1 scaffolding — `apps/api/src/worker.ts` is a second
-entrypoint into the *same* `apps/api` package (not a separate `apps/worker`
+entrypoint into the _same_ `apps/api` package (not a separate `apps/worker`
 package: extracting shared core code to support that would have been a much
 larger, riskier restructuring than a worker process actually required),
 deployed as a second `docker-compose` service built from the same image
@@ -1858,7 +1858,7 @@ and had a separate, deterministic over-broad-reset bug (resolved
 snapshot of "active" assignment/driver ids, then updated by that captured
 id list — an assignment independently transitioned in the gap between
 select and update would get silently overwritten back to
-`CANCELLED`/`COMPLETED`. Separately, cancellation reset *every* driver from
+`CANCELLED`/`COMPLETED`. Separately, cancellation reset _every_ driver from
 a `PENDING`-or-`CONFIRMED` capture to `IDLE`, even though only `CONFIRMED`
 ever touched availability — clobbering an unrelated, independently-set
 `ON_CALL`/`ESCALATED` flag on a driver whose only connection was a
@@ -1873,7 +1873,7 @@ drivers who had a genuinely `CONFIRMED` engagement, re-checked against
 path to one organization's rows — tenant scoping only existed via a
 `truckRequirement.ship.organizationId` join. Corrected from the review's
 own overstated diagnosis ("no usable index at all" — a join-driven plan
-was actually available, just one that scaled with an org's *entire*
+was actually available, just one that scaled with an org's _entire_
 historical volume, not its pending rows) before fixing it: denormalized
 `organizationId` directly onto `Assignment` (immutable once set, same
 pattern as `Ship`/`Driver`), added it to the tenant-scoping extension, and
@@ -1942,7 +1942,7 @@ the running Docker stack.
 deadlock under real concurrent load, despite Blocker 4's earlier
 transaction-wrapping fix (resolved 2026-08-06).** Wrapping each function's
 sequence in its own `$transaction` (Blocker 4) fixed crash-safety but left
-their *lock acquisition order* inverted: `updateShipStatus` locks
+their _lock acquisition order_ inverted: `updateShipStatus` locks
 Ship → Assignment → Driver; `cancelAssignment`/`markNoShow` locked
 Assignment → Driver → (conditionally) Ship. Two transactions each wanting a
 lock the other already holds is Postgres's definition of a deadlock
@@ -2084,7 +2084,7 @@ spike against the real `@call-e/calle` SDK (source code, not just
 documentation), then a from-scratch distributed-systems analysis of CALL-E
 as an external system (state machine, failure model, consistency model,
 concurrency, idempotency, recovery, security threat model), both completed
-and reported on *before* any Phase 4 production code was written. Several
+and reported on _before_ any Phase 4 production code was written. Several
 of the spike's findings directly contradicted this document's original,
 assumption-based §10/§14 sketches — see those sections above for the
 corrected design; this entry covers what the research found, why the
@@ -2114,26 +2114,26 @@ stack was actually started for real (see §14's ESM/CJS interop entry).
 **Architectural decisions made in response, each with a concrete reason to
 prefer it over the obvious alternative:**
 
-- *Treat every webhook as an untrusted signal, never a source of truth.*
+- _Treat every webhook as an untrusted signal, never a source of truth._
   Given no signature exists, the only sound design is: extract just enough
   from the delivery to know which call to check (an id), then re-fetch
   that call's authoritative state over the already-authenticated API
   connection. This is why `VoiceProvider.parseWebhookSignal` returns almost
   nothing, and why `CallEAdapter`'s webhook-body schema validates down to
   `{ id, type, data: { id } }` and nothing more.
-- *A separate `VoiceCallPlacement` record, not folding "in flight" into
-  `AssignmentAttempt`.* `AssignmentAttempt.outcome` is NOT NULL by design
-  (Phase 3) — an attempt is a *completed* fact, never a placeholder for one
+- _A separate `VoiceCallPlacement` record, not folding "in flight" into
+  `AssignmentAttempt`._ `AssignmentAttempt.outcome` is NOT NULL by design
+  (Phase 3) — an attempt is a _completed_ fact, never a placeholder for one
   still pending. Rather than widening that column's meaning, a new,
   minimal table records the moment a call is placed; the actual
   `AssignmentAttempt` is only created once a terminal outcome exists. This
   is also what let reconciliation and crash-recovery work at all — without
   a durable "we placed this call" record, nothing could answer "which
   calls are we still waiting on?"
-- *Extending `assignments.service.ts`, not building a parallel state
-  machine.* A new `AttemptActor` discriminated union
+- _Extending `assignments.service.ts`, not building a parallel state
+  machine._ A new `AttemptActor` discriminated union
   (`{ source: 'human' }` vs. `{ source: 'system', provider,
-  externalCallId }`) lets the existing, already-hardened
+externalCallId }`) lets the existing, already-hardened
   `confirmAssignment`/`rejectAssignment`/`logAttempt` be called by the
   voice worker without impersonating a human dispatcher, defaulting to
   `{ source: 'human' }` for zero behavioral change at every existing HTTP
@@ -2141,17 +2141,17 @@ prefer it over the obvious alternative:**
   directly: the alternative (a second confirm/reject/log path duplicating
   Phase 3's transaction and locking logic) would have doubled the surface
   area needing the same concurrency guarantees re-proven from scratch.
-- *A per-assignment-per-round `callAttemptRef`, not a random idempotency
-  key or a fixed one.* A fixed key (e.g. the assignment id alone) would
+- _A per-assignment-per-round `callAttemptRef`, not a random idempotency
+  key or a fixed one._ A fixed key (e.g. the assignment id alone) would
   make a legitimate later retry — after an earlier round already resolved
   UNREACHABLE and a dispatcher wants to try again — collide with the first
   round's idempotency key and silently return the old, already-resolved
-  call. A random key per placement *attempt* (rather than per *round*)
+  call. A random key per placement _attempt_ (rather than per _round_)
   would fail to collapse a genuine duplicate enqueue (two rapid clicks
   before the first round resolves) into one real call. Deriving it from
   the count of prior placements for that assignment gets both properties
   right with no new schema.
-- *Four independent idempotency layers, not one.* BullMQ job id, CALL-E's
+- _Four independent idempotency layers, not one._ BullMQ job id, CALL-E's
   own idempotency key, `AssignmentAttempt.externalCallId`'s uniqueness, and
   `VoiceWebhookEvent`'s id-as-primary-key each guard against a different
   failure mode (duplicate enqueue, duplicate real API call, two different
@@ -2248,7 +2248,7 @@ duplicate webhook collapsed to one processed job via BullMQ's own job-id
 dedup, worker boot log confirming the reconciliation scheduler registered).
 
 **Repository consolidation — a genuine reproducibility gap found and fixed
-(resolved 2026-08-07).** Verifying the repo builds from its *tracked*
+(resolved 2026-08-07).** Verifying the repo builds from its _tracked_
 content alone (a fresh `git clone` + `pnpm install`, not the working
 directory's already-populated `node_modules`) surfaced a real bug: `prisma
 generate`'s output (`.prisma/client`) lands in a different location
@@ -2259,7 +2259,7 @@ correctly resolves — this is the path every `build`/`prisma:generate` call
 in this project had always used, which is why the gap was invisible all
 session. Run via pnpm's own `postinstall` lifecycle hook — the first fix
 attempted here — it lands hoisted at the workspace root instead, which
-`tsc` does *not* resolve, producing dozens of `Property 'x' does not exist
+`tsc` does _not_ resolve, producing dozens of `Property 'x' does not exist
 on type 'PrismaClient'` errors from a plain `pnpm install` alone. Confirmed
 by reproducing the failure twice (once at a deeply nested path, once at
 `C:\kverify` to rule out an unrelated Windows path-length issue) and then
@@ -2295,7 +2295,7 @@ cleanly paginatable by a real DB column) and `GET /api/v1/voice-calls/active`
 unpaginated but capped at 50, since it's bounded in practice by
 `VOICE_CALLS_CONCURRENCY`). Kept as two purpose-fit queries rather than one
 UNION feed: the two tables are linked only by a shared `externalCallId`
-*value*, not a formal Prisma relation, so a single paginated feed across
+_value_, not a formal Prisma relation, so a single paginated feed across
 both would need an awkward hand-rolled UNION for no real benefit over two
 small, honest queries. Tenant isolation is enforced the same way
 `voice.service.ts` already enforces it elsewhere in this module (neither
@@ -2312,7 +2312,7 @@ pattern from `useAssignments`), reusing `ATTEMPT_OUTCOME_LABEL` from
 `assignments/statusStyles.ts` rather than inventing new outcome vocabulary
 for the same underlying fact. Deliberately **read-only**: no "call again"
 action on a history row, because that DTO doesn't carry the assignment's
-*current* status (it can have changed since the call happened), and
+_current_ status (it can have changed since the call happened), and
 offering an action against a possibly-stale assignment would risk a
 duplicate/incorrect placement — call-initiation stays exclusively on the
 Assignment resource, where current state is authoritative. A "View in
@@ -2354,7 +2354,7 @@ and CALL-E's real API key never reaches the browser; loading/empty/error
 states are all explicit, not silently swallowed. One accepted, narrow
 limitation, not fixed: `useActiveCalls`'s conditional polling (same
 pattern as `useAssignments`) stops entirely once it observes zero active
-calls, so a call placed by a *different* tab/session while this page sits
+calls, so a call placed by a _different_ tab/session while this page sits
 idle at zero won't appear until the page remounts — identical, pre-existing
 behavior to the pattern it was copied from, not something introduced here.
 
@@ -2401,12 +2401,12 @@ only `create/get/listEvents/waitForResult/createAndWait`, all outbound.
 CALL-E cannot receive a call and hand it to Kinvo; it can only place
 outbound confirmation calls, exactly as Phase 4 already uses it. Presented
 as a blocking decision with three options; the user chose **Option A**:
-re-scope Yellow Zone to be fed by unresolved *outbound* calls — the
+re-scope Yellow Zone to be fed by unresolved _outbound_ calls — the
 `SYSTEM_ERROR` `AssignmentAttempt`s Phase 4 already produces when a call
 fails, times out, or CALL-E can't judge the outcome — rather than a literal
 inbound-call feature that has no implementation path against the real
 provider. Nothing about Phase 4's actual call-placement behavior changed;
-only what happens *after* a call ends up `SYSTEM_ERROR` is new.
+only what happens _after_ a call ends up `SYSTEM_ERROR` is new.
 
 **Schema and state machine.** `YellowZoneItem` (new model) denormalizes
 `driverId`/`shipId`/`destination`/`truckType` onto the row itself, the same
@@ -2452,7 +2452,7 @@ processing are worker-invoked), and the test harness. A single Socket.io
 splitting the realtime layer in two: `core/realtime/socketServer.ts`
 (subscribe-side, API-process-only, accepts browser connections, wired to
 Redis via `@socket.io/redis-adapter` for multi-instance correctness) and
-`core/realtime/emitter.ts` (publish-side, used by *both* processes via
+`core/realtime/emitter.ts` (publish-side, used by _both_ processes via
 `@socket.io/redis-emitter`, which speaks the same Redis pub/sub protocol the
 adapter listens on without needing a Socket.io `Server` instance at all).
 The emitter's Redis connection is a module-level singleton — an earlier
@@ -2519,7 +2519,7 @@ handling it with no page reload.
 the automated suite could catch since it never keeps a component mounted
 across a mutation the way an actual dispatcher session does:**
 
-1. *Yellow Zone detail modal went stale after `claim`.* `YellowZonePage`
+1. _Yellow Zone detail modal went stale after `claim`._ `YellowZonePage`
    held the open item as a `useState` snapshot captured at click-open time;
    claiming (which deliberately keeps the modal open, unlike resolve/
    dismiss, so a dispatcher can move straight into resolving) invalidated
@@ -2529,15 +2529,15 @@ across a mutation the way an actual dispatcher session does:**
    (the endpoints already return the updated `YellowZoneItemDto`) flow back
    into the parent's selection state via a new `onClaimed` callback, rather
    than relying on the list refetch to somehow reach a detached snapshot.
-2. *`AuthProvider`'s silent-refresh-on-mount raced itself under React 18
-   StrictMode.* Every dev-mode mount runs the effect twice
+2. _`AuthProvider`'s silent-refresh-on-mount raced itself under React 18
+   StrictMode._ Every dev-mode mount runs the effect twice
    (mount → cleanup → mount); the existing `cancelled` guard only stops the
-   *discarded* invocation's own state update, not its `fetch()` from
+   _discarded_ invocation's own state update, not its `fetch()` from
    reaching the server. Since the refresh-token cookie is single-use/
    rotating, both invocations' concurrent `POST /auth/refresh` calls raced
    for the same cookie — one redeemed it (`200`), the other got a spurious
    `401` — and because response ordering doesn't have to match effect
-   ordering, the *live* invocation could be the one that lost, incorrectly
+   ordering, the _live_ invocation could be the one that lost, incorrectly
    signing a genuinely-authenticated user out on a hard reload. Pre-existing
    since Phase 1, only surfaced now because this phase's live-verification
    loop reloaded the app far more times in a row than prior phases' manual
@@ -2611,9 +2611,9 @@ full-stack demonstration.
 **Product decisions made explicit, not guessed at.** The original Phase 5
 pass shipped two real ambiguities without resolving them:
 
-- *Can a different dispatcher finish a colleague's claimed item?* Yes,
+- _Can a different dispatcher finish a colleague's claimed item?_ Yes,
   intentionally — kept as-is (no code change), because `assignments.
-  service.ts`'s own `confirmAssignment`/`rejectAssignment`/
+service.ts`'s own `confirmAssignment`/`rejectAssignment`/
   `cancelAssignment`/`markNoShow` never gate on `createdByUserId` either;
   every action on a shared resource in this codebase is available to any
   teammate with the right RBAC permission, not just whoever touched it
@@ -2621,10 +2621,10 @@ pass shipped two real ambiguities without resolving them:
   `yellow-zone.service.ts`, and proven with two new regression tests
   (`test/integration/yellow-zone.test.ts`'s "shared ownership" describe
   block) rather than left as an untested assumption.
-- *No way to release a claim.* An `IN_REVIEW` item that its claimant never
+- _No way to release a claim._ An `IN_REVIEW` item that its claimant never
   finishes had no path back to `PENDING` — it just silently dropped out of
   the "needs attention" signal forever. Added `PATCH /yellow-zone/:id/
-  unclaim`, using the same conditional-`updateMany`-plus-affected-row-count
+unclaim`, using the same conditional-`updateMany`-plus-affected-row-count
   pattern every other transition here already uses. Deliberately
   claimant-only (unlike resolve/dismiss) — releasing is "let go of what I
   grabbed," a materially more disruptive action to hand to a bystander than
@@ -2859,11 +2859,11 @@ any role, can read/update their own preferences.
 
 **Persistence, precisely:**
 
-| Data | Where | Why |
-|---|---|---|
-| theme, accent, fontFamily, fontSize, density, reducedMotion, yellowZoneEscalationNotifications, notificationSound | **Database** (`user_preferences` table, structured enum/boolean columns, not JSON) | Durable, cross-device source of truth. Every field is a small closed set — a JSON blob would trade DB-level validation for no real flexibility, since nothing here is ever free text. |
-| The same six appearance fields, as one JSON blob | **localStorage** (`kinvo:appearance`) | *Not* the source of truth — a synchronous read-before-paint cache only `index.html`'s inline bootstrap script and `lib/appearance.ts` touch, so theme/font/etc. can be applied before React mounts (flash-of-wrong-theme avoidance) and optimistically during a mutation. Always overwritten with the real fetched value once it arrives (`SettingsProvider`'s reconciliation effect) — a stale cache from a previous account on the same browser self-corrects on next login, it never overrides a genuine server value. |
-| `data-theme`/`data-accent`/`data-font-family`/`data-font-size`/`data-density`/`data-reduced-motion` on `<html>` | **Runtime-only** | The actual mechanism index.css's entire token system keys off. Rebuilt from either the localStorage cache (pre-mount) or the fetched `Settings` object (post-mount) — never itself a source of truth, always derived. |
+| Data                                                                                                              | Where                                                                              | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| theme, accent, fontFamily, fontSize, density, reducedMotion, yellowZoneEscalationNotifications, notificationSound | **Database** (`user_preferences` table, structured enum/boolean columns, not JSON) | Durable, cross-device source of truth. Every field is a small closed set — a JSON blob would trade DB-level validation for no real flexibility, since nothing here is ever free text.                                                                                                                                                                                                                                                                                                                                     |
+| The same six appearance fields, as one JSON blob                                                                  | **localStorage** (`kinvo:appearance`)                                              | _Not_ the source of truth — a synchronous read-before-paint cache only `index.html`'s inline bootstrap script and `lib/appearance.ts` touch, so theme/font/etc. can be applied before React mounts (flash-of-wrong-theme avoidance) and optimistically during a mutation. Always overwritten with the real fetched value once it arrives (`SettingsProvider`'s reconciliation effect) — a stale cache from a previous account on the same browser self-corrects on next login, it never overrides a genuine server value. |
+| `data-theme`/`data-accent`/`data-font-family`/`data-font-size`/`data-density`/`data-reduced-motion` on `<html>`   | **Runtime-only**                                                                   | The actual mechanism index.css's entire token system keys off. Rebuilt from either the localStorage cache (pre-mount) or the fetched `Settings` object (post-mount) — never itself a source of truth, always derived.                                                                                                                                                                                                                                                                                                     |
 
 **Theme architecture — CSS custom properties, not a second component
 library or a runtime CSS-in-JS system.** Before this feature, every
@@ -2882,7 +2882,7 @@ doesn't exist yet for someone who hasn't logged in.
 Status colors (`--danger`/`--warning`/`--success`/`--info`) are a
 **separate token family** from `--accent-*` — they vary by theme (a
 light-mode red and a dark-mode red are different literal RGB values for
-contrast) but *never* by accent choice; none of the five `[data-accent]`
+contrast) but _never_ by accent choice; none of the five `[data-accent]`
 blocks redefine them. Switching from Ocean to Slate recolors buttons and
 active navigation; it never recolors an error state.
 
@@ -2948,10 +2948,10 @@ Gating the badge/list's own live-invalidation behind a preference would
 make the core Phase 6 feature simply not work when the toggle is off,
 which is a materially worse outcome than not building the toggle at all.
 
-Of the two toggles that *were* built, only one has real backend teeth —
+Of the two toggles that _were_ built, only one has real backend teeth —
 `yellowZoneEscalationNotifications` is checked in
 `voice.service.ts`'s recipient-targeting query
-(`logSystemErrorWithEscalation`): a recipient with an *existing* row set
+(`logSystemErrorWithEscalation`): a recipient with an _existing_ row set
 to `false` is excluded from the notification fan-out for a new
 escalation. (A user who has never opened Settings has no row yet, so the
 schema default — `true`, "notify me" — still applies; only an explicit
@@ -3102,8 +3102,7 @@ resolved.
 
 ## UI redesign — Phase E (Intelligence): Timeline
 
-**Investigation before implementation:** `AuditLogEntry` (added in Phase
-3) has been write-only since it was built — `AuditLogger` exposes only
+**Investigation before implementation:** `AuditLogEntry` (added in Phase 3) has been write-only since it was built — `AuditLogger` exposes only
 `record()`, and no read endpoint over it existed anywhere in this
 codebase. All 33 (now 36) `AuditEventType` values are genuinely written
 somewhere, so Timeline is a real read path over real history, not new
@@ -3316,6 +3315,7 @@ including one that reconstructs the original bug's exact failure mode
 (a mid-day `end` that isn't calendar-aligned).
 
 **Every number has a real formula:**
+
 - **Calls Automated**: count of `AssignmentAttempt` rows with `provider`
   set (i.e. CALL-E-originated, not human-recorded) in the window.
 - **Resolution Rate**: the fraction of those attempts whose outcome is
@@ -3365,6 +3365,7 @@ imply more than the feature does.
 
 **Three rules, each gated on a real minimum sample so an insight is
 never asserted from noise:**
+
 - **Driver Reliability** — the driver with the most REJECTED/CANCELLED/
   NO_SHOW `Assignment` rows in the period, only surfaced if they have at
   least 2 and are a clear outlier (strictly ahead of the runner-up, not
@@ -3454,3 +3455,153 @@ against the running dev stack: registered a fresh account, renamed
 both the user's name and the organization's name through the real UI,
 confirmed both changes persist across a full page reload (not just
 optimistic client state).
+
+## Security/concurrency remediation pass
+
+An external code review of this codebase raised two P0 and five P1
+findings. Each was independently re-verified against the actual source
+before any fix was written — two of the seven turned out to already be
+addressed or architecturally impossible, and are documented here rather
+than "fixed" a second time.
+
+**P0 — an already-connected socket ignored membership revocation.**
+`resolveAuthenticatedContext` (socketServer.ts) only ran at _connect_
+time; a role change or removal correctly rejected the next REST request
+and the next socket _reconnect_, but an already-open socket kept
+receiving org-wide realtime events (Yellow Zone escalations, etc.) for
+as long as the tab stayed open — the file's own doc comment had
+explicitly flagged and deferred this during the Phase 5 hardening pass.
+Fixed with a new `disconnectUser` (core/realtime/emitter.ts), the same
+Redis-pub/sub mechanism `emitToUser`/`emitToOrganization` already use to
+reach sockets from any process — `organizations.service.ts`'s
+`updateMemberRole`/`removeMember` call it right after
+`tokenRevocationStore.revokeMembership`, force-disconnecting every
+socket in that user's room immediately. Verified with 3 new integration
+tests using real `socket.io-client` connections against a real server
+(role-change disconnects, removal disconnects, an unaffected teammate's
+socket survives).
+
+**P0 — refresh-token family revocation had a real gap under
+concurrency.** `refresh()`'s claim-the-token, detect-reuse-and-revoke-
+family, and create-the-replacement-token steps were each their own
+auto-committing statement, not one transaction. A losing (replay)
+request's family-wide revocation sweep could run — and commit — in the
+gap between the winning request's claim committing and its replacement
+token being inserted, so that replacement token would come into
+existence _after_ the sweep that was supposed to catch it, live in a
+family the client was just told had been fully revoked. Fixed by
+wrapping the claim through the replacement-token creation in one
+`$transaction`, so the row lock the claim takes is held until the
+replacement token is committed — any concurrent replay's own claim
+attempt on the same row now blocks until then, so its sweep always sees
+the replacement. The reuse-detection branch also had to switch from
+throwing mid-transaction (which was silently rolling back the family
+revocation it had just performed — caught by a regression test failing
+during development, not assumed) to returning a discriminated result and
+throwing only after the transaction commits. Verified by a new test
+proving the _specific_ gap: under 10 concurrent requests for the same
+token, the one winning replacement token is itself unusable afterward,
+not just "only one request succeeded."
+
+**P1 — the membership-revocation denylist's TTL could theoretically be
+shorter than the access token it guards.** `token-revocation.ts`'s
+denylist entries expire after a fixed 24h, sized under the assumption
+that no access token could outlive that. Nothing enforced the
+assumption: a `JWT_ACCESS_TTL` configured longer than 24h would let a
+revoked membership's already-issued tokens start working again once the
+(now-expired) denylist entry fell out of Redis. `config/env.ts` now
+validates at startup that `JWT_ACCESS_TTL` never exceeds
+`REVOCATION_TTL_SECONDS`, parsing the same ms-style duration grammar the
+existing regex already accepts. 4 new unit tests.
+
+**P1 — concurrent reminder-campaign creation could create two pending
+campaigns for the same ship.** `createReminderCampaign`'s "does a
+pending campaign already exist" check was check-then-create, the same
+class of race this codebase has fixed elsewhere (registerOrganization,
+acceptInvitation). Closed with a hand-authored partial unique index
+(`reminder_campaigns_one_pending_per_ship`, on `shipId` WHERE
+`status = 'PENDING_APPROVAL'` — Prisma's schema DSL can't express
+partial indexes, same pattern as Assignment's active-engagement
+constraint) plus a P2002 catch converting the loser's raw constraint
+violation into the same clean 409 the up-front check already gives a
+non-concurrent duplicate. Verified with a new test: 10 concurrent
+creates for the same ship, exactly one campaign created, zero 500s.
+
+**P1 — a permanently failed voice-placement job silently blocked all
+future retries for up to 7 days.** No `VoiceCallPlacement` row is ever
+created for a round that never succeeded, so `priorPlacementCount` (and
+therefore the deterministic BullMQ job id) stays identical on every
+retry attempt. A job that exhausted all 5 attempts stays in Redis under
+that same id for `removeOnFail`'s 7-day retention — BullMQ's dedup-by-id
+doesn't care that the existing job is dead, so a dispatcher's retry
+request got a 202 "queued" back with nothing actually enqueued.
+`placeCallForAssignment` now checks for an existing job under the
+deterministic id and removes it first if (and only if) it's in the
+`failed` state, leaving a still-active/waiting/delayed job untouched
+(the real, intended dedup case — a second concurrent enqueue for the
+same round should still collapse into the one in flight). Verified with
+a new test using a real BullMQ `Worker` (not asserted queue-internals)
+forcing a genuine permanent failure, then proving the retry actually
+enqueues fresh work.
+
+**P1 — a failed post-commit audit write could turn a successful
+mutation into a client-visible 500.** `AuditLogger.record()`'s no-`tx`
+path (audit written after the business mutation already committed — the
+overwhelmingly common case) let a transient write failure propagate
+uncaught, so a client could receive a 500 for a mutation that had, in
+fact, already succeeded — risking a retry that re-runs a non-idempotent
+operation. Now caught and logged at error level, never rethrown, in
+that branch specifically. The `tx`-supplied path (the few call sites
+where the audit write is meant to be atomic with a still-open
+transaction, e.g. `revertShipIfNowShort`) is unchanged — a failure there
+still propagates and correctly rolls back the transaction. 3 new unit
+tests, one for each branch plus the happy path.
+
+**P1 — the webhook endpoint's abuse/rate-limiting claim, re-checked and
+found already addressed.** The review flagged `POST /webhooks/call-e` as
+having "no durable pre-provider rate/abuse barrier." It already does:
+`voice.routes.ts` has carried a dedicated 300-req/min rate limiter on
+this exact route since Phase 4, and `processWebhookSignal` rejects an
+unrecognized `externalCallId` via one cheap indexed Postgres lookup
+_before_ ever reaching a real CALL-E API call — a flood of forged
+payloads can't cause provider-API amplification by construction, not
+just by the rate limit. No signature verification exists because none
+is possible: confirmed three independent ways during the original Phase
+4 spike (current docs, a dated changelog entry, a `@deprecated` HMAC
+verifier still shipped in the SDK with an explicit "not signed"
+comment) that CALL-E's webhooks carry no signature at all. No code
+change made for this finding.
+
+**Consciously not attempted:** DB-level composite-FK enforcement of
+cross-tenant invariants (e.g. `Driver.currentShipId` pointing at a ship
+in a different organization) and expanding realtime sync beyond Yellow
+Zone/notifications to every list view. Both are real, already-documented
+architectural tradeoffs this schema makes consistently and
+deliberately (see e.g. `YellowZoneItem`'s own schema comment) — closing
+them would mean retrofitting composite unique keys and FKs across
+several models with wide blast radius, for a gap that's currently only
+reachable through a bug in the tenant-scoping Prisma extension itself or
+a raw-SQL bypass, neither of which any real code path allows today.
+Revisiting this is a deliberate architectural decision for a future
+pass, not something to rush alongside seven unrelated fixes.
+
+**Also fixed (P2, low-risk):** Transcripts silently capped at the first
+100 resolved calls with no way to reach anything older — now paginated
+with a "Load older calls" control (`TranscriptsPage.tsx`, reusing the
+same page-replaces pattern `TimelinePage.tsx` already established),
+including handling the case where the _first_ page has zero transcripts
+but a later one doesn't (an honest "check older calls" prompt instead
+of a dead-end empty state). 2 new tests.
+
+**Verification:** 388 backend tests passing (+13), 101 frontend tests
+passing (+2), full workspace typecheck/lint/build clean, Prisma schema
+validated. The new `reminder_campaigns_pending_unique` migration was
+applied to both the dev and test databases. Live-verified against the
+running dev stack for basic functionality (login, dashboard, REST
+traffic); the socket-disconnect fixes specifically were verified via the
+3 new integration tests using real `socket.io-client` connections
+(stronger evidence than a manual two-tab browser test, since it asserts
+exact disconnect timing) rather than a manual browser session, after the
+embedded preview browser showed WebSocket connection noise believed to
+be a proxying limitation of that environment, not a code regression —
+unconfirmed either way beyond the automated coverage.

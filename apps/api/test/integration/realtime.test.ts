@@ -78,7 +78,10 @@ function waitForConnectError(socket: Socket): Promise<Error> {
 
 function waitForEvent<T>(socket: Socket, event: string, timeoutMs = 3000): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timed out waiting for "${event}"`)), timeoutMs);
+    const timer = setTimeout(
+      () => reject(new Error(`Timed out waiting for "${event}"`)),
+      timeoutMs,
+    );
     socket.once(event, (payload: T) => {
       clearTimeout(timer);
       resolve(payload);
@@ -152,8 +155,128 @@ describe('realtime — socket authentication', () => {
   });
 });
 
+function waitForDisconnect(socket: Socket, timeoutMs = 3000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('Timed out waiting for the socket to be disconnected')),
+      timeoutMs,
+    );
+    socket.once('disconnect', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+describe('realtime — force-disconnect on membership revocation', () => {
+  // P0 fix: resolveAuthenticatedContext only runs at connect time, so a
+  // socket that authenticated before a role change/removal used to keep
+  // receiving org-wide events for as long as it stayed connected — the
+  // REST side (authenticate.ts, re-run on every request) already rejected
+  // a revoked membership immediately, but nothing told an already-open
+  // socket to drop. organizations.service.ts's updateMemberRole/removeMember
+  // now call disconnectUser (core/realtime/emitter.ts) right after
+  // tokenRevocationStore.revokeMembership, which force-disconnects any
+  // socket in that user's room over the same Redis channel emitToUser/
+  // emitToOrganization already use — these tests connect a real socket and
+  // prove it actually receives a `disconnect`, not just that a REST
+  // request would now be rejected.
+  it('disconnects an already-connected socket the moment its role changes', async () => {
+    const { app, container } = buildAppWithContainer();
+    const owner = await registerOrganization(app);
+    const invite = await request(app)
+      .post('/api/v1/organizations/invitations')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ email: 'teammate@example.com', role: 'DISPATCHER' });
+    const accept = await request(app).post('/api/v1/auth/accept-invitation').send({
+      token: invite.body.inviteToken,
+      firstName: 'Team',
+      lastName: 'Mate',
+      password: 'correct-horse-battery-staple',
+    });
+    const teammateToken = accept.body.accessToken as string;
+    const teammateMembershipId = accept.body.membership.id as string;
+
+    const { url } = await startRealtimeServer(container);
+    const teammateSocket = connectSocket(url, teammateToken);
+    await waitForConnect(teammateSocket);
+    expect(teammateSocket.connected).toBe(true);
+
+    const disconnected = waitForDisconnect(teammateSocket);
+    await request(app)
+      .patch(`/api/v1/organizations/members/${teammateMembershipId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ role: 'VIEWER' });
+
+    await disconnected;
+    expect(teammateSocket.connected).toBe(false);
+  });
+
+  it('disconnects an already-connected socket the moment its membership is removed', async () => {
+    const { app, container } = buildAppWithContainer();
+    const owner = await registerOrganization(app);
+    const invite = await request(app)
+      .post('/api/v1/organizations/invitations')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ email: 'teammate@example.com', role: 'DISPATCHER' });
+    const accept = await request(app).post('/api/v1/auth/accept-invitation').send({
+      token: invite.body.inviteToken,
+      firstName: 'Team',
+      lastName: 'Mate',
+      password: 'correct-horse-battery-staple',
+    });
+    const teammateToken = accept.body.accessToken as string;
+    const teammateMembershipId = accept.body.membership.id as string;
+
+    const { url } = await startRealtimeServer(container);
+    const teammateSocket = connectSocket(url, teammateToken);
+    await waitForConnect(teammateSocket);
+
+    const disconnected = waitForDisconnect(teammateSocket);
+    await request(app)
+      .delete(`/api/v1/organizations/members/${teammateMembershipId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    await disconnected;
+    expect(teammateSocket.connected).toBe(false);
+  });
+
+  it('does not disconnect other org members’ sockets, only the affected user’s', async () => {
+    const { app, container } = buildAppWithContainer();
+    const owner = await registerOrganization(app);
+    const invite = await request(app)
+      .post('/api/v1/organizations/invitations')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ email: 'teammate@example.com', role: 'DISPATCHER' });
+    const accept = await request(app).post('/api/v1/auth/accept-invitation').send({
+      token: invite.body.inviteToken,
+      firstName: 'Team',
+      lastName: 'Mate',
+      password: 'correct-horse-battery-staple',
+    });
+    const teammateToken = accept.body.accessToken as string;
+    const teammateMembershipId = accept.body.membership.id as string;
+
+    const { url } = await startRealtimeServer(container);
+    const ownerSocket = connectSocket(url, owner.accessToken);
+    const teammateSocket = connectSocket(url, teammateToken);
+    await Promise.all([waitForConnect(ownerSocket), waitForConnect(teammateSocket)]);
+
+    const teammateDisconnected = waitForDisconnect(teammateSocket);
+    await request(app)
+      .delete(`/api/v1/organizations/members/${teammateMembershipId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    await teammateDisconnected;
+
+    // A short grace window — proving the owner's own socket survives, not
+    // just racing the assertion against the disconnect broadcast latency.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(ownerSocket.connected).toBe(true);
+  });
+});
+
 describe('realtime — organization room isolation', () => {
-  it('delivers an event only to the target organization\'s room, never a different one', async () => {
+  it("delivers an event only to the target organization's room, never a different one", async () => {
     const { app, container } = buildAppWithContainer();
     const orgA = await registerOrganization(app);
     const orgB = await registerOrganization(app);
@@ -188,7 +311,9 @@ describe('realtime — organization room isolation', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
         shipName: 'MSC Aurora',
-        truckRequirements: [{ destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 }],
+        truckRequirements: [
+          { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 },
+        ],
       });
     const truckRequirementId = shipResponse.body.truckRequirements[0].id as string;
     const driverResponse = await request(app)
@@ -246,7 +371,7 @@ describe('realtime — organization room isolation', () => {
 });
 
 describe('realtime — user room isolation (Phase 6 notifications)', () => {
-  it('delivers a user-targeted event only to that user\'s socket, never a same-org teammate\'s', async () => {
+  it("delivers a user-targeted event only to that user's socket, never a same-org teammate's", async () => {
     const { app, container } = buildAppWithContainer();
     const owner = await registerOrganization(app);
     // A second, genuinely different user in the SAME organization —
@@ -257,14 +382,12 @@ describe('realtime — user room isolation (Phase 6 notifications)', () => {
       .post('/api/v1/organizations/invitations')
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({ email: 'teammate@example.com', role: 'DISPATCHER' });
-    const accept = await request(app)
-      .post('/api/v1/auth/accept-invitation')
-      .send({
-        token: invite.body.inviteToken,
-        firstName: 'Team',
-        lastName: 'Mate',
-        password: 'correct-horse-battery-staple',
-      });
+    const accept = await request(app).post('/api/v1/auth/accept-invitation').send({
+      token: invite.body.inviteToken,
+      firstName: 'Team',
+      lastName: 'Mate',
+      password: 'correct-horse-battery-staple',
+    });
     const teammateToken = accept.body.accessToken as string;
     const teammateUserId = accept.body.user.id as string;
 
@@ -296,7 +419,9 @@ describe('realtime — user room isolation (Phase 6 notifications)', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({
         shipName: 'MSC Aurora',
-        truckRequirements: [{ destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 }],
+        truckRequirements: [
+          { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 },
+        ],
       });
     const truckRequirementId = shipResponse.body.truckRequirements[0].id as string;
     const driverResponse = await request(app)

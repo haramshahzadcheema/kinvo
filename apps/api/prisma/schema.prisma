@@ -781,6 +781,16 @@ model ReminderCampaign {
   createdByUser  User         @relation("ReminderCampaignCreatedBy", fields: [createdByUserId], references: [id])
   approvedByUser User?        @relation("ReminderCampaignApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
 
+  // A ship may have at most one PENDING_APPROVAL campaign at a time — the
+  // service layer's own check-then-create (reminders.service.ts's
+  // createReminderCampaign) was a real race: two concurrent requests could
+  // both pass the "does one already exist" check before either committed.
+  // Same shape as Assignment's active-engagement constraint — Prisma's
+  // schema DSL cannot express a partial/filtered unique index, so the real
+  // constraint is hand-authored in the migration SQL; this plain @@index
+  // is the query-shape hint only. A ship CAN have multiple historical
+  // campaigns (sent, then later cancelled, then a new one) — this index
+  // only ever blocks a second simultaneously-pending one.
   @@index([organizationId, status])
   @@index([shipId])
   @@map("reminder_campaigns")

@@ -25,10 +25,16 @@ function formatOffset(seconds: number | null): string | null {
 // voice.service.ts's listCalls.
 export function TranscriptsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const { data, isLoading, isError } = useCalls({ pageSize: PAGE_SIZE });
+  const [page, setPage] = useState(1);
+  const { data, isLoading, isError } = useCalls({ page, pageSize: PAGE_SIZE });
+  // Same next-page-replaces "Load more" shape as TimelinePage's own
+  // pagination (useTimeline) — a resolved call's transcript is a real,
+  // reachable record either way, not silently capped past the first 100.
+  const hasMore = data ? page < data.totalPages : false;
 
   const withTranscripts = (data?.items ?? []).filter((call) => call.transcriptTurns.length > 0);
-  const selected = withTranscripts.find((call) => call.id === selectedId) ?? withTranscripts[0] ?? null;
+  const selected =
+    withTranscripts.find((call) => call.id === selectedId) ?? withTranscripts[0] ?? null;
 
   useEffect(() => {
     if (selectedId && !withTranscripts.some((call) => call.id === selectedId)) {
@@ -40,7 +46,7 @@ export function TranscriptsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [withTranscripts]);
 
-  if (isLoading) {
+  if (isLoading && page === 1) {
     return <TranscriptsSkeleton />;
   }
 
@@ -55,9 +61,21 @@ export function TranscriptsPage() {
           No transcripts yet
         </div>
         <p className="text-xs text-[var(--text-muted)]">
-          CALL-E stores a transcript for calls that reach a driver — none of the resolved calls so
-          far have one.
+          {hasMore
+            ? // None of the calls on this page have a transcript — real
+              // resolved calls exist further back, not a dead end.
+              'None of the most recent resolved calls have one yet.'
+            : 'CALL-E stores a transcript for calls that reach a driver — none of the resolved calls so far have one.'}
         </p>
+        {hasMore && (
+          <button
+            onClick={() => setPage((p) => p + 1)}
+            disabled={isLoading}
+            className="mt-3.5 rounded-full border border-[var(--border)] px-4 py-2 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)] disabled:opacity-50"
+          >
+            {isLoading ? 'Loading…' : 'Check older calls'}
+          </button>
+        )}
       </div>
     );
   }
@@ -73,6 +91,15 @@ export function TranscriptsPage() {
             onSelect={() => setSelectedId(call.id)}
           />
         ))}
+        {hasMore && (
+          <button
+            onClick={() => setPage((p) => p + 1)}
+            disabled={isLoading}
+            className="mt-1 rounded-xl px-3 py-2 text-center text-[length:var(--text-4)] font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-card-alt)] disabled:opacity-50"
+          >
+            {isLoading ? 'Loading…' : 'Load older calls'}
+          </button>
+        )}
       </div>
       <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-card)] p-5">
         {selected && <TranscriptDetail call={selected} />}
@@ -120,7 +147,9 @@ function TranscriptDetail({ call }: { call: ResolvedVoiceCallDto }) {
     <div>
       <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[var(--surface-muted)] pb-3.5">
         <div>
-          <h3 className="text-[length:var(--text-10)] font-bold text-[var(--text-strong)]">{call.driverName}</h3>
+          <h3 className="text-[length:var(--text-10)] font-bold text-[var(--text-strong)]">
+            {call.driverName}
+          </h3>
           <p className="mt-0.5 text-[length:var(--text-5)] text-[var(--text-muted)]">
             {call.shipName} · {call.destination} · {formatDateTime(call.attemptedAt)}
           </p>

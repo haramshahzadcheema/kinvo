@@ -15,7 +15,12 @@ const REVOKED_MEMBERSHIP_KEY_PREFIX = 'revoked-membership:';
 // against by a few hours of harmless extra Redis memory — not a
 // correctness gap, since the check is "is this token's issuedAtMs older
 // than the last revocation," not "has this exact key expired yet."
-const REVOCATION_TTL_SECONDS = 24 * 60 * 60;
+// Exported (not module-private) so config/env.ts can enforce, at startup,
+// that JWT_ACCESS_TTL never exceeds it — see that file's own comment for
+// the failure mode this closes: a denylist entry that expires before the
+// access token it was guarding against does would silently let a revoked
+// membership's already-issued tokens start working again.
+export const REVOCATION_TTL_SECONDS = 24 * 60 * 60;
 
 /**
  * Closes the one gap `authenticate.ts`'s stateless-JWT design otherwise

@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { Worker } from 'bullmq';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildAppWithContainer } from '../support/app';
 import { resetDatabase } from '../support/db';
@@ -6,7 +7,12 @@ import { registerOrganization } from '../support/fixtures';
 import type { FakeVoiceProvider } from '../../src/core/voice/FakeVoiceProvider';
 import { prisma } from '../../src/core/prisma';
 import { runWithRequestContext, type RequestContext } from '../../src/core/request-context';
-import { voiceCallsQueue, voiceWebhookEventsQueue } from '../../src/core/queue/queues';
+import {
+  VOICE_CALLS_QUEUE_NAME,
+  voiceCallsQueue,
+  voiceWebhookEventsQueue,
+} from '../../src/core/queue/queues';
+import { queueConnection } from '../../src/core/queue/queueConnection';
 
 beforeEach(async () => {
   await resetDatabase();
@@ -28,7 +34,9 @@ async function setUpPendingAssignment(app: ReturnType<typeof buildAppWithContain
     .set('Authorization', `Bearer ${owner.accessToken}`)
     .send({
       shipName: 'MSC Aurora',
-      truckRequirements: [{ destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 }],
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+      ],
     });
   const truckRequirementId = shipResponse.body.truckRequirements[0].id as string;
 
@@ -191,6 +199,61 @@ describe('voice module — placing calls', () => {
     expect(job).toBeDefined();
   });
 
+  it('a retry after the same round permanently failed actually enqueues new work, not a silent no-op', async () => {
+    // Regression test for a real bug: no VoiceCallPlacement row is ever
+    // created for a round that never succeeded, so priorPlacementCount —
+    // and therefore callAttemptRef/the BullMQ job id — stays identical on
+    // every retry attempt until something clears the dead job. Before this
+    // fix, placeCallForAssignment's plain `.add({ jobId })` call silently
+    // no-oped against a job id BullMQ already had on file (even in the
+    // `failed` state — dedup-by-id doesn't care about a job's terminal
+    // outcome), so a dispatcher who saw no confirmation call happen and
+    // retried would get 202 "queued" back with nothing actually enqueued,
+    // for as long as removeOnFail's 7-day retention kept the dead job
+    // around. Simulates a real permanent failure with a real BullMQ Worker
+    // (attempts: 1 on this one job only, not the queue's real 5-attempt
+    // default, so the test doesn't wait through real exponential backoff)
+    // rather than asserting against internal queue state a real failure
+    // wouldn't leave any differently.
+    const { app, container } = buildAppWithContainer();
+    const { owner, assignmentId } = await setUpPendingAssignment(app);
+    const jobId = `place-call:${assignmentId}:0`;
+
+    await voiceCallsQueue.add(
+      'place-call',
+      { assignmentId, organizationId: owner.organizationId, callAttemptRef: `${assignmentId}:0` },
+      { jobId, attempts: 1 },
+    );
+
+    const failingWorker = new Worker(
+      VOICE_CALLS_QUEUE_NAME,
+      async () => {
+        throw new Error('Simulated permanent CALL-E outage for this test.');
+      },
+      { connection: queueConnection },
+    );
+    const failed = new Promise<void>((resolve) => {
+      failingWorker.on('failed', (job) => {
+        if (job?.id === jobId) resolve();
+      });
+    });
+    await failed;
+    await failingWorker.close();
+
+    const deadJob = await voiceCallsQueue.getJob(jobId);
+    expect(await deadJob?.isFailed()).toBe(true);
+
+    await runWithRequestContext(systemContextFor(owner), () =>
+      container.voiceService.placeCallForAssignment(assignmentId),
+    );
+
+    // The dead job under the same id must be gone — replaced by a fresh,
+    // genuinely re-processable one (not stuck permanently failed).
+    const retriedJob = await voiceCallsQueue.getJob(jobId);
+    expect(retriedJob).toBeDefined();
+    expect(await retriedJob?.isFailed()).toBe(false);
+  });
+
   it('rejects placing a call for an assignment that is not pending', async () => {
     const { app, container } = buildAppWithContainer();
     const { owner, assignmentId } = await setUpPendingAssignment(app);
@@ -228,14 +291,12 @@ describe('voice module — HTTP surface', () => {
       .set('Authorization', `Bearer ${owner.accessToken}`)
       .send({ email: 'viewer@example.com', role: 'VIEWER' });
 
-    const accept = await request(app)
-      .post('/api/v1/auth/accept-invitation')
-      .send({
-        token: invite.body.inviteToken,
-        firstName: 'Vi',
-        lastName: 'Ewer',
-        password: 'correct-horse-battery-staple',
-      });
+    const accept = await request(app).post('/api/v1/auth/accept-invitation').send({
+      token: invite.body.inviteToken,
+      firstName: 'Vi',
+      lastName: 'Ewer',
+      password: 'correct-horse-battery-staple',
+    });
 
     const response = await request(app)
       .post(`/api/v1/assignments/${assignmentId}/voice-calls`)
@@ -321,7 +382,9 @@ describe('voice module — resolving outcomes', () => {
     });
     expect(resolvedPlacement.resolvedAt).not.toBeNull();
 
-    const webhookEvent = await prisma.voiceWebhookEvent.findUnique({ where: { id: 'evt-confirm' } });
+    const webhookEvent = await prisma.voiceWebhookEvent.findUnique({
+      where: { id: 'evt-confirm' },
+    });
     expect(webhookEvent?.attemptId).toBe(attempt?.id);
   });
 
@@ -421,7 +484,9 @@ describe('voice module — resolving outcomes', () => {
       }),
     ).resolves.toBeUndefined();
 
-    const webhookEvent = await prisma.voiceWebhookEvent.findUnique({ where: { id: 'evt-unknown' } });
+    const webhookEvent = await prisma.voiceWebhookEvent.findUnique({
+      where: { id: 'evt-unknown' },
+    });
     expect(webhookEvent).toBeNull();
   });
 
@@ -432,7 +497,11 @@ describe('voice module — resolving outcomes', () => {
     const fake = container.voiceProvider as FakeVoiceProvider;
     fake.setOutcome(placement.externalCallId, { kind: 'confirmed' });
 
-    const jobData = { provider: 'fake', eventId: 'evt-dup', externalCallId: placement.externalCallId };
+    const jobData = {
+      provider: 'fake',
+      eventId: 'evt-dup',
+      externalCallId: placement.externalCallId,
+    };
     await container.voiceService.processWebhookSignal(jobData);
     await container.voiceService.processWebhookSignal(jobData);
 

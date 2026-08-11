@@ -8,19 +8,20 @@ beforeEach(async () => {
   await resetDatabase();
 });
 
-async function inviteViewer(app: ReturnType<typeof buildAppWithContainer>['app'], owner: { accessToken: string }) {
+async function inviteViewer(
+  app: ReturnType<typeof buildAppWithContainer>['app'],
+  owner: { accessToken: string },
+) {
   const invite = await request(app)
     .post('/api/v1/organizations/invitations')
     .set('Authorization', `Bearer ${owner.accessToken}`)
     .send({ email: 'viewer@example.com', role: 'VIEWER' });
-  const accept = await request(app)
-    .post('/api/v1/auth/accept-invitation')
-    .send({
-      token: invite.body.inviteToken,
-      firstName: 'Vi',
-      lastName: 'Ewer',
-      password: 'correct-horse-battery-staple',
-    });
+  const accept = await request(app).post('/api/v1/auth/accept-invitation').send({
+    token: invite.body.inviteToken,
+    firstName: 'Vi',
+    lastName: 'Ewer',
+    password: 'correct-horse-battery-staple',
+  });
   return accept.body.accessToken as string;
 }
 
@@ -32,14 +33,12 @@ async function inviteDispatcher(
     .post('/api/v1/organizations/invitations')
     .set('Authorization', `Bearer ${owner.accessToken}`)
     .send({ email: 'second-dispatcher@example.com', role: 'DISPATCHER' });
-  const accept = await request(app)
-    .post('/api/v1/auth/accept-invitation')
-    .send({
-      token: invite.body.inviteToken,
-      firstName: 'Dee',
-      lastName: 'Ispatcher',
-      password: 'correct-horse-battery-staple',
-    });
+  const accept = await request(app).post('/api/v1/auth/accept-invitation').send({
+    token: invite.body.inviteToken,
+    firstName: 'Dee',
+    lastName: 'Ispatcher',
+    password: 'correct-horse-battery-staple',
+  });
   return { accessToken: accept.body.accessToken as string, userId: accept.body.user.id as string };
 }
 
@@ -58,7 +57,9 @@ async function setUpShipWithConfirmedDriver(
       shipName: 'MSC Aurora',
       gate: 'Gate 3',
       reportingTime: new Date(Date.now() + 3_600_000).toISOString(),
-      truckRequirements: [{ destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 }],
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+      ],
     });
   const shipId = shipResponse.body.id as string;
   const truckRequirementId = shipResponse.body.truckRequirements[0].id as string;
@@ -152,6 +153,45 @@ describe('reminder campaigns module — creation and listing', () => {
       .send({ shipId })
       .expect(400);
     expect(second.body.error.message).toMatch(/already has a reminder campaign/i);
+  });
+
+  it('under concurrent creation for the same ship, exactly one campaign is created and no request 500s', async () => {
+    // Regression test for a real check-then-create race: the up-front
+    // findFirst-then-create in createReminderCampaign lets multiple
+    // concurrent requests all read "no pending campaign yet" before any of
+    // them commits — without a database-level guarantee, this used to be
+    // able to create more than one live PENDING_APPROVAL campaign for the
+    // same ship. Closed by the reminder_campaigns_pending_unique migration's
+    // partial unique index (shipId WHERE status = 'PENDING_APPROVAL'); this
+    // test proves concurrent requests can no longer all win it, and that
+    // the loser gets a clean 409, not a raw 500 from an uncaught
+    // constraint violation.
+    const { app } = buildAppWithContainer();
+    const owner = await registerOrganization(app);
+    const { shipId } = await setUpShipWithConfirmedDriver(app, owner);
+
+    const CONCURRENCY = 10;
+    const responses = await Promise.all(
+      Array.from({ length: CONCURRENCY }, () =>
+        request(app)
+          .post('/api/v1/reminder-campaigns')
+          .set('Authorization', `Bearer ${owner.accessToken}`)
+          .send({ shipId }),
+      ),
+    );
+
+    const successes = responses.filter((r) => r.status === 201);
+    const serverErrors = responses.filter((r) => r.status >= 500);
+    expect(successes).toHaveLength(1);
+    expect(serverErrors).toHaveLength(0);
+    expect(
+      responses.filter((r) => r.status !== 201).every((r) => r.status === 400 || r.status === 409),
+    ).toBe(true);
+
+    const pendingCount = await request(app)
+      .get('/api/v1/reminder-campaigns?status=PENDING_APPROVAL')
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(pendingCount.body.total).toBe(1);
   });
 
   it('filters the list by status', async () => {

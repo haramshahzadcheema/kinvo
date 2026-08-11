@@ -21,7 +21,24 @@ export type EmitToOrganization = (
   payload: RealtimePayload,
 ) => void;
 
-export type EmitToUser = (userId: string, event: RealtimeEventName, payload: RealtimePayload) => void;
+export type EmitToUser = (
+  userId: string,
+  event: RealtimeEventName,
+  payload: RealtimePayload,
+) => void;
+
+// Forces every socket currently connected as this user to disconnect —
+// used when a membership is revoked (role change, removal), so access
+// doesn't merely stop being *granted* going forward but also stops being
+// *usable* on a connection that authenticated before the revocation. See
+// socketServer.ts's own doc comment for the gap this closes: a revoked/
+// expired token was previously only checked at connect time, leaving an
+// already-established connection live (and still receiving org-wide
+// events) for as long as it stayed open. `close: true` actually tears down
+// the transport rather than just detaching the socket.io session, so the
+// client's own `disconnect` handler fires and it doesn't silently keep
+// listening on a connection the server no longer considers valid.
+export type DisconnectUser = (userId: string) => void;
 
 // A dedicated, process-wide connection — same reasoning as
 // core/queue/queueConnection.ts's own comment: every `createContainer()`
@@ -31,7 +48,9 @@ export type EmitToUser = (userId: string, event: RealtimeEventName, payload: Rea
 // never actually connects at all for the large majority of tests that
 // never touch a code path that emits.
 export const emitterRedisClient = new Redis(env.REDIS_URL, { lazyConnect: true });
-emitterRedisClient.on('error', (error) => logger.error({ err: error }, 'Realtime emitter Redis error'));
+emitterRedisClient.on('error', (error) =>
+  logger.error({ err: error }, 'Realtime emitter Redis error'),
+);
 
 function organizationRoom(organizationId: string): string {
   return `org:${organizationId}`;
@@ -75,6 +94,7 @@ function targetIdFor(payload: RealtimePayload): string | undefined {
 export function createRealtimeEmitter(): {
   emitToOrganization: EmitToOrganization;
   emitToUser: EmitToUser;
+  disconnectUser: DisconnectUser;
 } {
   const emitter = new Emitter(emitterRedisClient);
 
@@ -107,5 +127,13 @@ export function createRealtimeEmitter(): {
     emitter.to(userRoom(userId)).emit(event, payload);
   };
 
-  return { emitToOrganization, emitToUser };
+  const disconnectUser: DisconnectUser = (userId) => {
+    logger.info(
+      { userId },
+      'Force-disconnecting a user’s realtime connections after a membership revocation.',
+    );
+    emitter.to(userRoom(userId)).disconnectSockets(true);
+  };
+
+  return { emitToOrganization, emitToUser, disconnectUser };
 }

@@ -49,19 +49,30 @@ function userRoom(userId: string): string {
  * any equivalent); the only room a socket ever joins is derived from its
  * own verified token.
  *
- * A revoked/expired token is only checked at connect time, not on a
- * mid-session timer — an already-established connection is not re-verified
- * for the rest of its lifetime, only at each (re)connect. What bounds this
- * in practice: the frontend's `connectSocket` (apps/web/src/lib/socket.ts)
+ * A token is only *verified* at connect time, not on a mid-session timer —
+ * an already-established connection doesn't re-run JWT/revocation checks
+ * for the rest of its lifetime, only at each (re)connect. That's fine for
+ * ordinary expiry: the frontend's `connectSocket` (apps/web/src/lib/socket.ts)
  * reads the current access token fresh on every connection attempt,
  * including automatic reconnects, and `RealtimeProvider`'s `connect_error`
  * handler proactively redeems the refresh-token cookie the moment a
  * (re)connect is rejected for an expired token, then retries immediately —
- * so an established connection can go stale for as long as it stays
- * connected, but every reconnect attempt self-heals rather than repeating
- * the same expired token indefinitely. Adding a per-socket expiry timer to
- * also bound an already-connected socket's staleness was considered and
- * left out — see the Phase 5 hardening-pass entry in the Decisions log.
+ * so a connection that simply outlives its token's TTL self-heals on its
+ * own next reconnect, no server-side push needed.
+ *
+ * A *revoked* membership (role change, removal) is a different case and
+ * IS pushed to already-connected sockets, not just left to the next
+ * reconnect: `organizations.service.ts`'s `updateMemberRole`/`removeMember`
+ * call `disconnectUser` (core/realtime/emitter.ts) right after
+ * `tokenRevocationStore.revokeMembership`, which force-disconnects every
+ * socket currently in that user's room via the same Redis pub/sub channel
+ * `emitToUser`/`emitToOrganization` already use — so a removed/demoted
+ * user's live connection stops receiving org-wide events immediately,
+ * rather than for as long as the browser tab happens to stay open. A
+ * per-socket expiry *timer* (independent of any explicit revocation) was
+ * still considered and left out — see the Phase 5 hardening-pass entry in
+ * the Decisions log — ordinary expiry doesn't need one given the
+ * self-healing reconnect behavior above.
  */
 export function createRealtimeServer(
   httpServer: HttpServer,
@@ -82,8 +93,12 @@ export function createRealtimeServer(
   // clients connected to this server at all.
   const pubClient = new Redis(env.REDIS_URL, { lazyConnect: true });
   const subClient = pubClient.duplicate();
-  pubClient.on('error', (error) => logger.error({ err: error }, 'Socket.io Redis pub client error'));
-  subClient.on('error', (error) => logger.error({ err: error }, 'Socket.io Redis sub client error'));
+  pubClient.on('error', (error) =>
+    logger.error({ err: error }, 'Socket.io Redis pub client error'),
+  );
+  subClient.on('error', (error) =>
+    logger.error({ err: error }, 'Socket.io Redis sub client error'),
+  );
   io.adapter(createAdapter(pubClient, subClient));
 
   io.use((socket, next) => {
