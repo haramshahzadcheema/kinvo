@@ -210,6 +210,9 @@ export type {
   AnalyticsSummaryDto,
 } from './analytics.schema';
 
+export { insightSchema, insightsSummaryQuerySchema, insightsSummarySchema } from './insights.schema';
+export type { InsightDto, InsightsSummaryQuery, InsightsSummaryDto } from './insights.schema';
+
 export {
   notificationTypeSchema,
   notificationTargetTypeSchema,

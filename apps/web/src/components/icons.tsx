@@ -194,3 +194,12 @@ export function AnalyticsIcon(props: SVGProps<SVGSVGElement>) {
     </Icon>
   );
 }
+
+export function InsightIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M9 18h6M10 21h4" />
+      <path d="M12 3a6 6 0 0 0-3.5 10.9c.5.36.8.94.8 1.6v.5h5.4v-.5c0-.66.3-1.24.8-1.6A6 6 0 0 0 12 3z" />
+    </Icon>
+  );
+}

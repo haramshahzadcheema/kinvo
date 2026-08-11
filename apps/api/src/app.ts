@@ -15,6 +15,7 @@ import { createAssignmentsRouter } from './modules/assignments/assignments.route
 import { createAuthRouter } from './modules/auth/auth.routes';
 import { createDriversRouter } from './modules/drivers/drivers.routes';
 import { createHealthRouter } from './modules/health/health.routes';
+import { createInsightsRouter } from './modules/insights/insights.routes';
 import { createNotificationRouter } from './modules/notifications/notification.routes';
 import { createOrganizationsRouter } from './modules/organizations/organizations.routes';
 import { createPreferencesRouter } from './modules/preferences/preferences.routes';
@@ -95,6 +96,7 @@ export function createApp(container: Container): Express {
   );
   app.use('/api/v1/timeline', createTimelineRouter(container.timelineService, authenticate));
   app.use('/api/v1/analytics', createAnalyticsRouter(container.analyticsService, authenticate));
+  app.use('/api/v1/insights', createInsightsRouter(container.insightsService, authenticate));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

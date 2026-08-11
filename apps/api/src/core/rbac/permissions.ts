@@ -27,7 +27,8 @@ export type Action =
   | 'reminders:read'
   | 'reminders:manage'
   | 'timeline:read'
-  | 'analytics:read';
+  | 'analytics:read'
+  | 'insights:read';
 
 const ORGANIZATION_MANAGEMENT_ACTIONS: readonly Action[] = [
   'members:read',
@@ -83,6 +84,10 @@ const TIMELINE_ACTIONS: readonly Action[] = ['timeline:read'];
 // to every role including VIEWER.
 const ANALYTICS_ACTIONS: readonly Action[] = ['analytics:read'];
 
+// Same shape again — rule-based pattern observations over the same
+// underlying data, still read-only, no :manage counterpart.
+const INSIGHTS_ACTIONS: readonly Action[] = ['insights:read'];
+
 const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
   OWNER: new Set([
     ...ORGANIZATION_MANAGEMENT_ACTIONS,
@@ -91,6 +96,7 @@ const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
     ...REMINDER_ACTIONS,
     ...TIMELINE_ACTIONS,
     ...ANALYTICS_ACTIONS,
+    ...INSIGHTS_ACTIONS,
   ]),
   ADMIN: new Set([
     ...ORGANIZATION_MANAGEMENT_ACTIONS,
@@ -99,6 +105,7 @@ const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
     ...REMINDER_ACTIONS,
     ...TIMELINE_ACTIONS,
     ...ANALYTICS_ACTIONS,
+    ...INSIGHTS_ACTIONS,
   ]),
   // DISPATCHER is the primary persona for ships/drivers AND Yellow Zone
   // resolution (ARCHITECTURE.md §7) — full manage access on both, but
@@ -110,6 +117,7 @@ const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
     ...REMINDER_ACTIONS,
     ...TIMELINE_ACTIONS,
     ...ANALYTICS_ACTIONS,
+    ...INSIGHTS_ACTIONS,
   ]),
   VIEWER: new Set<Action>([
     'members:read',
@@ -119,6 +127,7 @@ const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
     'reminders:read',
     'timeline:read',
     'analytics:read',
+    'insights:read',
   ]),
 };
 

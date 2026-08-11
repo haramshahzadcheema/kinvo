@@ -3346,3 +3346,65 @@ correctly read "5 Aug" through "11 Aug" — seven real calendar days
 ending today, confirming the window-boundary fix live, not just in unit
 tests. 355 backend (+21: 13 unit, 8 integration) and 90 frontend (+6)
 tests passing; full workspace typecheck/lint/build clean.
+
+## UI redesign — Phase E (Intelligence): Insights — the last piece
+
+**A real design fork the user decided, not an engineering default:** the
+mockup's "AI Insights" implies genuine LLM-generated summaries
+("18 drivers asked about payment today..."). Building that for real
+means a new external API dependency, real per-call cost, and — since the
+raw material is driver phone-call transcripts — sending that content to
+a third-party model. That's a product/privacy decision, not just an
+implementation detail, so it was surfaced explicitly rather than
+assumed: asked whether Insights should be (a) rule-based over data
+already in Postgres, (b) a real LLM integration, or (c) deferred. The
+user chose (a). The nav label reflects that choice honestly — "Insights,"
+not "AI Insights" — and the page itself states plainly that these are
+rule-based patterns, not AI-generated, rather than letting the label
+imply more than the feature does.
+
+**Three rules, each gated on a real minimum sample so an insight is
+never asserted from noise:**
+- **Driver Reliability** — the driver with the most REJECTED/CANCELLED/
+  NO_SHOW `Assignment` rows in the period, only surfaced if they have at
+  least 2 and are a clear outlier (strictly ahead of the runner-up, not
+  tied) — one bad day isn't a pattern, and a tie among several drivers
+  with one each isn't a real signal either.
+- **Escalation Timing** — the UTC hour-of-day carrying the largest share
+  of `YellowZoneItem` creations, only surfaced with at least 5
+  escalations in the period and the peak hour carrying at least ~3x the
+  ~4.2% uniform baseline for a 24-hour spread (12.5%) — otherwise a
+  "pattern" would just be describing normal variance.
+- **Common Driver Questions** — a small, fixed, literal keyword list
+  (payment/documents/schedule/vehicle) matched against real `user`-speaker
+  turns in `AssignmentAttempt.transcriptTurns` — the same data Transcripts
+  itself surfaces, now aggregated. Deliberately NOT semantic
+  understanding; the insight's own `basis` text says so, so a dispatcher
+  reading it never mistakes literal substring matching for real language
+  understanding. Requires at least 3 matching turns.
+
+Every insight also carries a `basis` string naming exactly how many real
+rows it's built from — visible on the card, not hidden in a tooltip —
+continuing the same transparency principle as Analytics' `deltaPct`
+nullability and Reminders' frozen-snapshot labeling.
+
+**Live verification performed:** the real `/api/v1/insights/summary`
+endpoint was confirmed live against the dev database, correctly
+returning an honest "Nothing stands out yet" empty state (the dev org's
+existing activity doesn't clear any rule's minimum-sample threshold) —
+itself a meaningful proof that the endpoint, RBAC, and empty-state UI
+all work correctly end-to-end, not just a fallback screenshot. All three
+rules' actual trigger conditions (including the exact `basis`/
+`observation` text they produce) are proven by 9 new integration tests
+against real Postgres — a driver with 2 real rejections, 5 real
+escalations landing in the same real hour, and 3 real transcribed calls
+each mentioning payment — rather than only asserted live, since forcing
+those specific conditions into the shared dev database would have meant
+seeding data unrelated to what a real dispatcher would create. 364
+backend (+9) and 94 frontend (+4) tests passing; full workspace
+typecheck/lint/build clean.
+
+**Phase E complete.** Timeline, Transcripts, Analytics, and Insights are
+all shipped — every one built on real data this codebase already
+produces, with no fabricated statistics, no external API calls, and no
+feature whose UI claims something the backend can't actually support.

@@ -10,6 +10,7 @@ import {
 import { createAuthService, type AuthService } from '../modules/auth/auth.service';
 import { createDriversService, type DriversService } from '../modules/drivers/drivers.service';
 import { createHealthService, type HealthService } from '../modules/health/health.service';
+import { createInsightsService, type InsightsService } from '../modules/insights/insights.service';
 import {
   createNotificationService,
   type NotificationService,
@@ -82,6 +83,7 @@ export interface Container {
   remindersService: RemindersService;
   timelineService: TimelineService;
   analyticsService: AnalyticsService;
+  insightsService: InsightsService;
   emitToOrganization: EmitToOrganization;
   emitToUser: EmitToUser;
 }
@@ -143,6 +145,7 @@ export function createContainer(): Container {
   const remindersService = createRemindersService({ prisma, auditLogger });
   const timelineService = createTimelineService({ prisma });
   const analyticsService = createAnalyticsService({ prisma });
+  const insightsService = createInsightsService({ prisma });
 
   const voiceService = createVoiceService({
     prisma,
@@ -172,6 +175,7 @@ export function createContainer(): Container {
     remindersService,
     timelineService,
     analyticsService,
+    insightsService,
     emitToOrganization,
     emitToUser,
   };

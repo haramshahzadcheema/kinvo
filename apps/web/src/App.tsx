@@ -8,6 +8,7 @@ import {
   ChevronRightIcon,
   CloseIcon,
   DashboardIcon,
+  InsightIcon,
   MenuIcon,
   PhoneIcon,
   RecruitIcon,
@@ -27,6 +28,7 @@ import { AuthScreen } from './features/auth/AuthScreen';
 import { CallsPage } from './features/calls/CallsPage';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { DriversPage } from './features/drivers/DriversPage';
+import { InsightsPage } from './features/insights/InsightsPage';
 import { NotificationsPage } from './features/notifications/NotificationsPage';
 import { useUnreadCount } from './features/notifications/useNotifications';
 import { RecruitmentPage } from './features/recruitment/RecruitmentPage';
@@ -54,6 +56,7 @@ type Tab =
   | 'timeline'
   | 'transcripts'
   | 'analytics'
+  | 'insights'
   | 'notifications'
   | 'settings';
 
@@ -70,12 +73,13 @@ interface NavGroup {
 
 // Grouped to match the Operations/Fleet/Campaigns/Intelligence/System
 // structure of the reference design (docs: see the "Kinvo UI redesign
-// plan" memory). Intelligence currently carries Timeline, Transcripts,
-// and Analytics — the first three of its four planned pages (AI Insights
-// is later Phase E work, deliberately last so it can observe real data
-// from the other three instead of empty tables) — so the group appears
-// with what exists rather than waiting for all four, the same way
-// Campaigns appeared with Recruitment+Reminders alone.
+// plan" memory). All four Intelligence pages now exist — Timeline,
+// Transcripts, Analytics, and Insights, deliberately built last within
+// the group so it could observe real data from the other three instead
+// of empty tables. Labeled "Insights," not "AI Insights" as in the
+// Kinvo.dc.html mockup: every observation is a rule-based pattern over
+// real data, not an LLM call — see InsightsPage's own comment for why
+// that was a deliberate, explicit choice, not an oversight.
 const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Operations',
@@ -106,6 +110,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: 'timeline', label: 'Timeline', icon: TimelineIcon },
       { key: 'transcripts', label: 'Transcripts', icon: TranscriptIcon },
       { key: 'analytics', label: 'Analytics', icon: AnalyticsIcon },
+      { key: 'insights', label: 'Insights', icon: InsightIcon },
     ],
   },
   {
@@ -345,6 +350,7 @@ function Shell() {
           {tab === 'timeline' && <TimelinePage />}
           {tab === 'transcripts' && <TranscriptsPage />}
           {tab === 'analytics' && <AnalyticsPage />}
+          {tab === 'insights' && <InsightsPage />}
           {tab === 'notifications' && <NotificationsPage onNavigate={navigate} />}
           {tab === 'settings' && <SettingsPage />}
         </main>
