@@ -1,9 +1,5 @@
-import type {
-  DismissYellowZoneRequest,
-  ResolveYellowZoneRequest,
-  YellowZonePriorityValue,
-} from '@kinvo/contracts';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { DismissYellowZoneRequest, ResolveYellowZoneRequest } from '@kinvo/contracts';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { yellowZoneApi, type YellowZoneListParams } from './api';
 
 const YELLOW_ZONE_KEY = ['yellow-zone'] as const;
@@ -26,27 +22,6 @@ export function useYellowZoneStatusCounts() {
     queryKey: [...YELLOW_ZONE_KEY, 'stats'],
     queryFn: () => yellowZoneApi.stats(),
   });
-}
-
-const PRIORITY_FILTER_VALUES: YellowZonePriorityValue[] = ['HIGH', 'MEDIUM', 'LOW'];
-
-// Cheap count-only calls through the existing list endpoint, mirroring
-// useAssignmentStatusCounts/useCallStatusCounts's exact pattern — used by
-// the priority breakdown on the Yellow Zone page, not the top-line status
-// counts (which come from the dedicated /stats endpoint above).
-export function useYellowZonePriorityCounts() {
-  const results = useQueries({
-    queries: PRIORITY_FILTER_VALUES.map((priority) => ({
-      queryKey: [...YELLOW_ZONE_KEY, 'priority-stats', priority],
-      queryFn: () => yellowZoneApi.list({ priority, status: 'PENDING', pageSize: 1 }),
-    })),
-  });
-
-  const counts = Object.fromEntries(
-    PRIORITY_FILTER_VALUES.map((priority, i) => [priority, results[i]?.data?.total ?? 0]),
-  ) as Record<YellowZonePriorityValue, number>;
-
-  return { counts, isLoading: results.some((r) => r.isLoading) };
 }
 
 export function useYellowZoneMutations() {

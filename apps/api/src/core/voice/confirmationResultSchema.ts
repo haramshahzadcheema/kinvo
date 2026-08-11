@@ -34,4 +34,3 @@ export const CONFIRMATION_RESULT_JSON_SCHEMA = {
 export const confirmationStructuredResultSchema = z.object({
   confirmed: z.enum(['yes', 'no', 'unclear']),
 });
-export type ConfirmationStructuredResult = z.infer<typeof confirmationStructuredResultSchema>;

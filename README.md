@@ -6,22 +6,29 @@ architectural decisions, and phased milestone plan.
 
 ## Project status
 
-**Phase 0 — Foundation.** Monorepo scaffold, shared contracts package,
-Docker Compose local dev environment, CI skeleton. No business features yet
-— see the milestone plan in `docs/ARCHITECTURE.md` for what's next.
+A working port-logistics dispatch app: authentication and multi-tenant
+organizations; ship/driver/truck-requirement and driver-assignment
+management; automated outbound confirmation calls via CALL-E with webhook
+and BullMQ-driven retry/reconciliation; a Yellow Zone escalation queue with
+Socket.IO realtime updates; notifications; per-user appearance/notification
+settings; and an Intelligence group (Timeline, Transcripts, Analytics,
+rule-based Insights) plus Recruitment/Reminders campaigns. See
+`docs/ARCHITECTURE.md`'s decisions log for the full build history and
+current architecture.
 
 ## Structure
 
 ```
 apps/
-  api/                 Express + TypeScript REST API
+  api/                 Express + TypeScript REST API + BullMQ worker
   web/                 React + Vite + TypeScript dispatch manager UI
 packages/
   contracts/           Shared Zod schemas + inferred types (api + web both import this)
   config/              Shared tsconfig
 docs/
   ARCHITECTURE.md       System design, decisions log, milestone plan
-  phases/               Per-phase completion records
+  DEVELOPER_SETUP.md    Operational setup guide
+  PHASE_0_AUDIT.md       Historical Phase 0 audit record
 ```
 
 ## Prerequisites
@@ -67,15 +74,11 @@ pnpm run format        # Prettier --write
 pnpm run format:check  # Prettier --check (what CI runs)
 ```
 
-## Notes on the current scaffold
+## Notes
 
-- **Prisma is configured but has no models yet.** `prisma generate` refuses
-  to run with zero models — that's a Prisma CLI constraint, not a bug here.
-  Phase 1 introduces the first models (`Organization`, `User`,
-  `RefreshToken`); until then, `apps/api/src/core/database.ts` uses the
-  plain `pg` driver for the Postgres readiness check. See the decisions log
-  in `docs/ARCHITECTURE.md` for the full reasoning.
-- **`packages/contracts` is a pure ESM package.** Its only real runtime
-  consumer is `apps/web` (bundled by Vite/Rollup, ESM-native); `apps/api`
-  only ever does `import type` from it, which TypeScript erases entirely at
-  compile time, so the CJS/ESM boundary never matters there.
+- **`packages/contracts` is a pure ESM package** (`"type": "module"`), but
+  `apps/api` compiles to CommonJS and does real runtime `require()` calls
+  into it (Zod schemas passed to `validateBody`, realtime event-name
+  constants — not just `import type`). This works because Node ≥20.19
+  supports synchronous `require()` of ESM modules; `apps/web` imports it
+  the more conventional way, bundled directly by Vite/Rollup.

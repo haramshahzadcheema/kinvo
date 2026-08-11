@@ -58,7 +58,6 @@ export const pendingVoiceCallSchema = z.object({
   provider: z.string(),
   placedAt: z.string().datetime(),
 });
-export type PendingVoiceCallDto = z.infer<typeof pendingVoiceCallSchema>;
 
 // SYSTEM_ERROR describes an automated call platform's own failure — only
 // Phase 4's CALL-E webhook (not yet built) has a legitimate reason to

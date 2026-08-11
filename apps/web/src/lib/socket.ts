@@ -37,7 +37,3 @@ export function disconnectSocket(): void {
   socket?.disconnect();
   socket = null;
 }
-
-export function getSocket(): Socket | null {
-  return socket;
-}

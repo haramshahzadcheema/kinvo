@@ -69,20 +69,3 @@ export function applyAndCacheAppearance(appearance: AppearanceSlice): void {
     // still leaves the DOM correctly updated for this session.
   }
 }
-
-export function readCachedAppearance(): AppearanceSlice | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as AppearanceSlice) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function clearCachedAppearance(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // Nothing to clean up if storage was never writable to begin with.
-  }
-}
