@@ -136,6 +136,7 @@ export type {
 } from './assignment.schema';
 
 export {
+  transcriptTurnSchema,
   resolvedVoiceCallSchema,
   voiceCallListQuerySchema,
   voiceCallListResponseSchema,
@@ -143,6 +144,7 @@ export {
   activeVoiceCallsResponseSchema,
 } from './voiceCall.schema';
 export type {
+  TranscriptTurnDto,
   ResolvedVoiceCallDto,
   VoiceCallListQuery,
   VoiceCallListResponse,

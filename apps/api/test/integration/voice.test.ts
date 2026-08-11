@@ -670,6 +670,48 @@ describe('voice module — Calls list API', () => {
     expect(response.body.total).toBe(1);
   });
 
+  it('persists and returns a real transcript attached to the outcome', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, assignmentId } = await setUpPendingAssignment(app);
+    await placeAndResolve(container, owner, assignmentId, {
+      kind: 'confirmed',
+      transcript: {
+        summary: 'Driver confirmed the job.',
+        turns: [
+          { speaker: 'bot', text: 'Can you take this job?', offsetSeconds: 0 },
+          { speaker: 'user', text: 'Yes, I can.', offsetSeconds: 3.5 },
+        ],
+      },
+    });
+
+    const response = await request(app)
+      .get('/api/v1/voice-calls')
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    expect(response.body.items[0]).toMatchObject({
+      transcriptSummary: 'Driver confirmed the job.',
+      transcriptTurns: [
+        { speaker: 'bot', text: 'Can you take this job?', offsetSeconds: 0 },
+        { speaker: 'user', text: 'Yes, I can.', offsetSeconds: 3.5 },
+      ],
+    });
+  });
+
+  it('has an empty transcript, not an error, for a resolved call CALL-E reported no transcript for', async () => {
+    const { app, container } = buildAppWithContainer();
+    const { owner, assignmentId } = await setUpPendingAssignment(app);
+    await placeAndResolve(container, owner, assignmentId, { kind: 'unreachable' });
+
+    const response = await request(app)
+      .get('/api/v1/voice-calls')
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    expect(response.body.items[0]).toMatchObject({
+      transcriptSummary: null,
+      transcriptTurns: [],
+    });
+  });
+
   it('filters resolved calls by outcome', async () => {
     const { app, container } = buildAppWithContainer();
     const first = await setUpPendingAssignment(app);

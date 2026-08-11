@@ -177,3 +177,12 @@ export function TimelineIcon(props: SVGProps<SVGSVGElement>) {
     </Icon>
   );
 }
+
+export function TranscriptIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-4 4v-4H6a2 2 0 0 1-2-2V5z" />
+      <path d="M8 9h8M8 13h5" />
+    </Icon>
+  );
+}

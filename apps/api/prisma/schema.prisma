@@ -365,11 +365,11 @@ model Assignment {
 // so a provider's call-SID gives webhook-replay idempotency for free the
 // day it's needed, with no migration required at that point.
 model AssignmentAttempt {
-  id               String         @id @default(cuid())
-  assignmentId     String
-  outcome          AttemptOutcome
-  notes            String?
-  externalCallId   String?        @unique
+  id                String         @id @default(cuid())
+  assignmentId      String
+  outcome           AttemptOutcome
+  notes             String?
+  externalCallId    String?        @unique
   // Which voice provider produced this attempt, when it wasn't a human
   // dispatcher — null for every human-recorded attempt (recordedByUserId
   // set instead). A plain string, not an enum: CALL-E is the only
@@ -378,9 +378,22 @@ model AssignmentAttempt {
   // no DB-level validation of the value — acceptable since this column is
   // written by exactly one call site (the voice worker), never from user
   // input.
-  provider         String?
-  recordedByUserId String?
-  attemptedAt      DateTime       @default(now())
+  provider          String?
+  recordedByUserId  String?
+  attemptedAt       DateTime       @default(now())
+  // Real conversation data from CALL-E's own API — `CalleCalls.get(callId)`
+  // (already called by CallEAdapter.getCallOutcome on every completed call)
+  // returns this on every recipient attempt; it was simply never read
+  // until now (see outcomeTranslation.ts's extractTranscript). Both null
+  // for every human-recorded attempt and for a system attempt CALL-E
+  // itself reports no transcript for (e.g. an unreachable number that
+  // never connected) — "no transcript" is a real, honest outcome, not an
+  // error. transcriptTurns is the ordered turn list
+  // (`{ speaker, text, offsetSeconds }[]`); transcriptSummary is CALL-E's
+  // own one-line summary of the call, stored separately since it's a
+  // distinct field on the provider's response, not derived from the turns.
+  transcriptSummary String?
+  transcriptTurns   Json?
 
   assignment     Assignment          @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   // SetNull, not Restrict — recordedByUserId is already nullable for the

@@ -19,6 +19,7 @@ import type { AuditLogger } from '../../core/audit/audit-logger';
 import { ConflictError, NotFoundError } from '../../core/errors/AppError';
 import type { prisma as prismaClient, TransactionClient } from '../../core/prisma';
 import { getRequestContext } from '../../core/request-context';
+import type { CallTranscript } from '../../core/voice/VoiceProvider';
 
 export interface AssignmentsServiceDependencies {
   prisma: typeof prismaClient;
@@ -43,7 +44,17 @@ export interface AssignmentsServiceDependencies {
 // constructed at all.
 export type AttemptActor =
   | { source: 'human' }
-  | { source: 'system'; provider: string; externalCallId: string };
+  | {
+      source: 'system';
+      provider: string;
+      externalCallId: string;
+      // Real conversation data from the call this attempt resolves — see
+      // core/voice/outcomeTranslation.ts's extractTranscript. Optional
+      // (not every VoiceCallOutcome variant carries one, and a system
+      // error never does) — omitted means "not applicable," the same as
+      // null once persisted, never a signal to distinguish.
+      transcript?: CallTranscript | null;
+    };
 
 const DEFAULT_ATTEMPT_ACTOR: AttemptActor = { source: 'human' };
 
@@ -162,11 +173,36 @@ function assertShipAcceptsAssignments(shipStatus: string): void {
 function attemptRecordFields(
   actor: AttemptActor,
   humanUserId: string,
-): { recordedByUserId: string | null; provider: string | null; externalCallId: string | null } {
+): {
+  recordedByUserId: string | null;
+  provider: string | null;
+  externalCallId: string | null;
+  transcriptSummary: string | null;
+  transcriptTurns: Prisma.InputJsonValue | undefined;
+} {
   if (actor.source === 'system') {
-    return { recordedByUserId: null, provider: actor.provider, externalCallId: actor.externalCallId };
+    return {
+      recordedByUserId: null,
+      provider: actor.provider,
+      externalCallId: actor.externalCallId,
+      transcriptSummary: actor.transcript?.summary ?? null,
+      // undefined (omitted), not null, when there's no transcript to
+      // store — same convention as AuditLogEntry.metadata's own optional
+      // Json? field (see audit-logger.ts): passing undefined lets the
+      // column default to SQL NULL rather than writing a JSON `null`
+      // literal, which is a different, unwanted value for a Json? column.
+      transcriptTurns: actor.transcript
+        ? (actor.transcript.turns as unknown as Prisma.InputJsonValue)
+        : undefined,
+    };
   }
-  return { recordedByUserId: humanUserId, provider: null, externalCallId: null };
+  return {
+    recordedByUserId: humanUserId,
+    provider: null,
+    externalCallId: null,
+    transcriptSummary: null,
+    transcriptTurns: undefined,
+  };
 }
 
 // AuditEvent.actorUserId is required and has no foreign key (see

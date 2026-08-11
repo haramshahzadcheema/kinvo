@@ -1,6 +1,12 @@
 import type { Call } from '@call-e/calle';
 import { confirmationStructuredResultSchema } from './confirmationResultSchema';
-import type { VoiceCallOutcome } from './VoiceProvider';
+import type { CallTranscript, VoiceCallOutcome } from './VoiceProvider';
+
+// CallRecipient/CallAttempt/CallTranscriptTurn aren't all in @call-e/calle's
+// public export list (only Call/CallRecipient/CreateCallInput/EventList/
+// JsonObject are — see its index.d.ts) even though they're real,
+// documented fields reachable off Call — accessed via indexed access
+// below instead of a named CallAttempt import.
 
 /**
  * The single place that owns the mapping from CALL-E's verified state
@@ -71,6 +77,37 @@ function translateCallToOutcomeUnsafe(call: Call): VoiceCallOutcome {
   }
 }
 
+// CALL-E's own retry attempts within one recipient (CallAttempt[], plural)
+// are a different concept from Kinvo's own AssignmentAttempt (one row per
+// outreach round) — the LAST CallAttempt is the one whose status actually
+// determined the recipient's final state, so its transcript is the one
+// that reflects what happened, not an earlier retry's partial content.
+// Returns null (not an empty transcript) when there's genuinely nothing —
+// e.g. a number that never connected — since "no transcript exists" is a
+// real, honest outcome CALL-E itself reports, not a bug in this
+// extraction.
+function extractTranscript(recipient: Call['recipients'][number]): CallTranscript | null {
+  const attempt = recipient.attempts[recipient.attempts.length - 1];
+  if (!attempt) {
+    return null;
+  }
+  if (!attempt.summary && attempt.transcriptTurns.length === 0) {
+    return null;
+  }
+  return {
+    summary: attempt.summary,
+    turns: attempt.transcriptTurns.map((turn) => ({
+      speaker: turn.speaker,
+      text: turn.text,
+      // Genuinely snake_case at runtime, not a stale type — see calls.js's
+      // `transcriptTurns: attempt.transcript_turns ?? []`, which aliases
+      // the array itself to camelCase but never touches the turn objects
+      // inside it.
+      offsetSeconds: turn.offset_seconds,
+    })),
+  };
+}
+
 function translateCompletedCall(call: Call): VoiceCallOutcome {
   // Kinvo always places single-recipient calls — see CallEAdapter — so the
   // first recipient is the only one that can exist.
@@ -80,7 +117,7 @@ function translateCompletedCall(call: Call): VoiceCallOutcome {
   }
 
   if (recipient.status === 'failed' || recipient.status === 'skipped') {
-    return { kind: 'unreachable' };
+    return { kind: 'unreachable', transcript: extractTranscript(recipient) };
   }
 
   if (recipient.status !== 'completed') {
@@ -91,7 +128,11 @@ function translateCompletedCall(call: Call): VoiceCallOutcome {
   }
 
   if (call.taskCompleted === false) {
-    return { kind: 'ambiguous', reason: 'CALL-E did not judge the task as completed.' };
+    return {
+      kind: 'ambiguous',
+      reason: 'CALL-E did not judge the task as completed.',
+      transcript: extractTranscript(recipient),
+    };
   }
 
   // Prefer the recipient-level result (populated when a
@@ -107,15 +148,17 @@ function translateCompletedCall(call: Call): VoiceCallOutcome {
     return {
       kind: 'ambiguous',
       reason: 'Structured result missing or did not match the expected confirmation schema.',
+      transcript: extractTranscript(recipient),
     };
   }
 
+  const transcript = extractTranscript(recipient);
   switch (parsed.data.confirmed) {
     case 'yes':
-      return { kind: 'confirmed' };
+      return { kind: 'confirmed', transcript };
     case 'no':
-      return { kind: 'declined' };
+      return { kind: 'declined', transcript };
     case 'unclear':
-      return { kind: 'ambiguous', reason: 'Driver response was classified as unclear.' };
+      return { kind: 'ambiguous', reason: 'Driver response was classified as unclear.', transcript };
   }
 }

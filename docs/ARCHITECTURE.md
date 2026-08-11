@@ -3185,3 +3185,93 @@ resolved detail line (e.g. "Ahsan Raza — MSC Aurora (Salalah, Oman)" for
 the assignment events, "MSC Aurora" for the ship/reminder events), the
 correct actor name, and a real timestamp — no placeholder or synthesized
 row among them. 340 backend (+10) and 86 frontend (+7) tests passing.
+
+## UI redesign — Phase E (Intelligence): Transcripts
+
+Immediately following Timeline, this closes the exact question Timeline's
+own investigation left open: does building Transcripts for real require
+new CALL-E integration work, or was the data already there? It was
+already there.
+
+**What was actually true, verified against the SDK, not the docs:**
+`CallEAdapter.getCallOutcome` already calls `client.calls.get(externalCallId)`
+on every completed call, to translate CALL-E's response into Kinvo's own
+outcome vocabulary. That `Call` object's `recipients[].attempts[]` entries
+(`CallAttempt`, from `@call-e/calle`'s own `dist/calls.d.ts`) carry both
+`summary: string | null` and `transcriptTurns: CallTranscriptTurn[]` —
+real conversation content, already being fetched, on every single call,
+today. `outcomeTranslation.ts`'s `translateCompletedCall` simply never
+read past the structured confirmation result before now. Building
+Transcripts required **zero new calls to CALL-E's API** — only reading
+data already in hand and persisting it.
+
+One subtlety worth recording because it would silently break at runtime
+otherwise: `CallAttempt`/`CallTranscriptTurn` aren't part of
+`@call-e/calle`'s public export list (only `Call`/`CallRecipient`/
+`CreateCallInput`/`EventList`/`JsonObject` are — see the package's
+`index.d.ts`), so `outcomeTranslation.ts` derives the type via indexed
+access off `Call` rather than a named import. More importantly,
+`CallTranscriptTurn.offset_seconds` is genuinely snake_case **at
+runtime**, not just an artifact of the `.d.ts` — verified by reading the
+SDK's own `calls.js`, whose attempt-mapping only aliases the array
+(`transcriptTurns: attempt.transcript_turns ?? []`) without touching the
+turn objects inside it. Kinvo's own `CallTranscriptTurn` type
+(`core/voice/VoiceProvider.ts`) renames it to `offsetSeconds` at the one
+point of translation (`extractTranscript`), so nothing downstream ever
+has to know about the inconsistency.
+
+**Threading the data through, without breaking 30+ existing call
+sites:** `VoiceCallOutcome`'s `confirmed`/`declined`/`unreachable`/
+`ambiguous` variants gained an **optional** `transcript?: CallTranscript
+| null` field — `system_error` and `pending` don't carry one, since
+neither represents a call CALL-E actually completed talking to someone
+on. Optional (not required) was a deliberate choice: dozens of existing
+test call sites across `voice.test.ts`, `yellow-zone.test.ts`,
+`notification.test.ts`, and `outcomeTranslation.test.ts` construct
+`VoiceCallOutcome` literals like `{ kind: 'confirmed' }` — making
+`transcript` required would have meant touching every one just to add
+`transcript: null`, for no behavioral reason. `AttemptActor`'s `system`
+variant gained the same optional field, threaded through by
+`voice.service.ts`'s `applyVoiceOutcome` (`'transcript' in outcome ?
+outcome.transcript : undefined`) into `assignments.service.ts`'s
+`attemptRecordFields`, which is the one place that actually writes
+`AssignmentAttempt.transcriptSummary`/`.transcriptTurns` — two new
+nullable columns, additive migration, no data backfill needed since no
+attempt has ever had this data before.
+
+**Read surface reuses `voice.service.ts`'s existing Calls list, not a
+second parallel endpoint:** a transcript is a property of a resolved
+call, not a new domain entity — `resolvedVoiceCallSchema` gained
+`transcriptSummary`/`transcriptTurns` (empty array, not null, when a
+resolved call genuinely has none — e.g. a number that never connected),
+and `TranscriptsPage` reuses `calls/useCalls` exactly the way
+`RecruitmentPage` reuses `ships/useShips` — no dedicated API module,
+client-side filtered to calls where `transcriptTurns.length > 0`. This
+also means "no transcript" is not an error state anywhere in this
+pipeline: a driver who never picked up produces a resolved call with an
+honestly empty transcript, filtered out of the Transcripts list rather
+than shown as a broken row.
+
+**Live verification performed, without placing a real phone call:** the
+dev environment's `CALLE_API_KEY` is wired to the real `CallEAdapter`
+(only `NODE_ENV=test` gets `FakeVoiceProvider` — see `container.ts`), so
+exercising this live end-to-end would have meant placing an actual
+automated phone call, which was deliberately avoided. Instead: (1) the
+full pipeline — extraction, persistence, retrieval, contract shape — was
+proven by three new integration tests using `FakeVoiceProvider.setOutcome`
+with an explicit `transcript` payload, asserting it round-trips through
+real Postgres JSONB and comes back correctly on `GET /api/v1/voice-calls`;
+(2) the `TranscriptsPage` UI itself was verified by writing one realistic
+`AssignmentAttempt` row directly to the dev database (a local, reversible,
+non-production action — never through the real CALL-E path) and
+confirming the page rendered it correctly: driver name, outcome badge,
+ship/destination context, the summary block, and all four turns
+correctly split left (CALL-E) / right (driver) with `m:ss` offsets
+(`0:00`/`0:04`/`0:09`/`0:14`, floored from `0`/`4.2`/`9.8`/`14.1`).
+Confirmed Timeline was unaffected by the shared `assignments.service.ts`
+change (no audit event exists for the directly-seeded row, exactly as
+expected since it bypassed the real service function). 334 backend (+4:
+2 new transcript-extraction unit tests, 2 new transcript-persistence
+integration tests, plus 6 pre-existing outcomeTranslation assertions
+updated for the outcome shape's new field) and 84 frontend (+5) tests
+passing; full workspace typecheck/lint/build clean.

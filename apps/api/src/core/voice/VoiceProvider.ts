@@ -15,11 +15,33 @@
  * on its own — collapsing `pending` into `system_error` here would silently
  * mis-record a call that is simply still ringing.
  */
+// Kinvo's own vocabulary for a completed call's conversation content —
+// independent of CALL-E's wire format, matching every other type in this
+// file. Sourced from `CalleCalls.get(callId)`'s
+// `recipients[].attempts[].transcriptTurns`/`.summary` (see
+// outcomeTranslation.ts's extractTranscript) — real data CALL-E's API
+// already returns on every completed call; `speaker`/`text` are
+// unmodified, `offsetSeconds` is CALL-E's `offset_seconds` renamed for
+// this codebase's camelCase convention (the raw field is genuinely
+// snake_case at runtime even inside the SDK's otherwise-camelCase
+// `CallAttempt` type — verified in @call-e/calle's calls.js, not assumed
+// from the .d.ts alone).
+export interface CallTranscriptTurn {
+  speaker: 'bot' | 'user' | 'unknown';
+  text: string;
+  offsetSeconds: number | null;
+}
+
+export interface CallTranscript {
+  summary: string | null;
+  turns: CallTranscriptTurn[];
+}
+
 export type VoiceCallOutcome =
-  | { kind: 'confirmed' }
-  | { kind: 'declined' }
-  | { kind: 'unreachable' }
-  | { kind: 'ambiguous'; reason: string }
+  | { kind: 'confirmed'; transcript?: CallTranscript | null }
+  | { kind: 'declined'; transcript?: CallTranscript | null }
+  | { kind: 'unreachable'; transcript?: CallTranscript | null }
+  | { kind: 'ambiguous'; reason: string; transcript?: CallTranscript | null }
   | { kind: 'system_error'; reason: string }
   | { kind: 'pending' };
 

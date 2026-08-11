@@ -2,6 +2,22 @@ import { z } from 'zod';
 import { attemptOutcomeSchema } from './assignment.schema';
 import { paginationQuerySchema } from './pagination.schema';
 
+// Phase E (Intelligence — Transcripts): real conversation content from
+// CALL-E's own API (`recipients[].attempts[].transcriptTurns`/`.summary`
+// via CalleCalls.get(callId)) — see
+// core/voice/outcomeTranslation.ts's extractTranscript for how this gets
+// derived, and AssignmentAttempt.transcriptTurns in schema.prisma for
+// where it's persisted. Empty array (not null/absent) when a resolved
+// call genuinely has no transcript — e.g. a number that never connected —
+// so the frontend can render "no turns" with a plain `.length === 0`
+// check rather than a separate null branch.
+export const transcriptTurnSchema = z.object({
+  speaker: z.enum(['bot', 'user', 'unknown']),
+  text: z.string(),
+  offsetSeconds: z.number().nullable(),
+});
+export type TranscriptTurnDto = z.infer<typeof transcriptTurnSchema>;
+
 // A resolved automated call — backed 1:1 by an AssignmentAttempt with
 // provider set (see assignments.service.ts's AttemptActor). Reuses
 // attemptOutcomeSchema/its labels rather than inventing separate
@@ -26,6 +42,8 @@ export const resolvedVoiceCallSchema = z.object({
   outcome: attemptOutcomeSchema,
   notes: z.string().nullable(),
   attemptedAt: z.string().datetime(),
+  transcriptSummary: z.string().nullable(),
+  transcriptTurns: z.array(transcriptTurnSchema),
 });
 export type ResolvedVoiceCallDto = z.infer<typeof resolvedVoiceCallSchema>;
 

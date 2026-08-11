@@ -14,6 +14,7 @@ import {
   SettingsIcon,
   ShipIcon,
   TimelineIcon,
+  TranscriptIcon,
   TruckIcon,
 } from './components/icons';
 import { CallEStatusPill } from './components/CallEStatusPill';
@@ -31,6 +32,7 @@ import { RemindersPage } from './features/reminders/RemindersPage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { ShipsPage } from './features/ships/ShipsPage';
 import { TimelinePage } from './features/timeline/TimelinePage';
+import { TranscriptsPage } from './features/transcripts/TranscriptsPage';
 import { useYellowZoneStatusCounts } from './features/yellow-zone/useYellowZone';
 import { YellowZonePage } from './features/yellow-zone/YellowZonePage';
 import { AuthProvider } from './lib/auth';
@@ -48,6 +50,7 @@ type Tab =
   | 'recruitment'
   | 'reminders'
   | 'timeline'
+  | 'transcripts'
   | 'notifications'
   | 'settings';
 
@@ -64,10 +67,11 @@ interface NavGroup {
 
 // Grouped to match the Operations/Fleet/Campaigns/Intelligence/System
 // structure of the reference design (docs: see the "Kinvo UI redesign
-// plan" memory). Intelligence currently carries only Timeline — the first
-// of its four planned pages (Transcripts/Analytics/AI Insights are later
-// Phase E work) — so the group appears now rather than waiting for all
-// four, the same way Campaigns appeared with Recruitment+Reminders alone.
+// plan" memory). Intelligence currently carries Timeline and
+// Transcripts — the first two of its four planned pages (Analytics/AI
+// Insights are later Phase E work) — so the group appears with what
+// exists rather than waiting for all four, the same way Campaigns
+// appeared with Recruitment+Reminders alone.
 const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Operations',
@@ -94,7 +98,10 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     title: 'Intelligence',
-    items: [{ key: 'timeline', label: 'Timeline', icon: TimelineIcon }],
+    items: [
+      { key: 'timeline', label: 'Timeline', icon: TimelineIcon },
+      { key: 'transcripts', label: 'Transcripts', icon: TranscriptIcon },
+    ],
   },
   {
     title: 'System',
@@ -331,6 +338,7 @@ function Shell() {
           {tab === 'recruitment' && <RecruitmentPage onNavigate={navigate} />}
           {tab === 'reminders' && <RemindersPage />}
           {tab === 'timeline' && <TimelinePage />}
+          {tab === 'transcripts' && <TranscriptsPage />}
           {tab === 'notifications' && <NotificationsPage onNavigate={navigate} />}
           {tab === 'settings' && <SettingsPage />}
         </main>

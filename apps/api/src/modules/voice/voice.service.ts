@@ -100,6 +100,8 @@ function toResolvedVoiceCallDto(att: {
   provider: string | null;
   externalCallId: string | null;
   attemptedAt: Date;
+  transcriptSummary: string | null;
+  transcriptTurns: Prisma.JsonValue | null;
   assignment: VoiceCallAssignmentContext;
 }): ResolvedVoiceCallDto {
   return {
@@ -121,6 +123,13 @@ function toResolvedVoiceCallDto(att: {
     outcome: att.outcome,
     notes: att.notes,
     attemptedAt: att.attemptedAt.toISOString(),
+    transcriptSummary: att.transcriptSummary,
+    // Stored (or omitted, defaulting to SQL NULL) exactly as
+    // attemptRecordFields wrote it — a plain array of
+    // { speaker, text, offsetSeconds }, never re-shaped here. Empty array
+    // when the column is null, matching transcriptTurnSchema's own
+    // "empty, not null" convention.
+    transcriptTurns: (att.transcriptTurns as ResolvedVoiceCallDto['transcriptTurns'] | null) ?? [],
   };
 }
 
@@ -364,6 +373,10 @@ export function createVoiceService({
       source: 'system',
       provider: provenance.provider,
       externalCallId: provenance.externalCallId,
+      // Only confirmed/declined/unreachable/ambiguous carry a transcript
+      // field at all (see VoiceCallOutcome) — 'in' narrows correctly for
+      // the system_error branch, which has none.
+      transcript: 'transcript' in outcome ? outcome.transcript : undefined,
     };
 
     try {
