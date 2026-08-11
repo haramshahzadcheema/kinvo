@@ -59,3 +59,14 @@ export const meResponseSchema = z.object({
   membership: currentMembershipSchema,
 });
 export type MeResponse = z.infer<typeof meResponseSchema>;
+
+// Name-only, deliberately — email has no verification flow in this
+// codebase (see AccountSection.tsx's own comment), so it stays read-only
+// rather than becoming a free, unverified edit. Returns the full
+// MeResponse, same shape as GET /me, so the frontend can just replace its
+// cached auth state wholesale instead of patching one field into it.
+export const updateMeRequestSchema = z.object({
+  firstName: z.string().trim().min(1).max(100),
+  lastName: z.string().trim().min(1).max(100),
+});
+export type UpdateMeRequest = z.infer<typeof updateMeRequestSchema>;

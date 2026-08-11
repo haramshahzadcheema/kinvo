@@ -36,6 +36,8 @@ const authValue: AuthContextValue = {
   login: vi.fn(),
   register: vi.fn(),
   logout: vi.fn(),
+  updateMe: vi.fn(),
+  updateOrganization: vi.fn(),
 };
 
 // Clicks the DESKTOP sidebar button for a section — see the rendering
@@ -230,6 +232,92 @@ describe('SettingsPage — account', () => {
     await openSection('Account');
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
     expect(authValue.logout).toHaveBeenCalledTimes(1);
+  });
+
+  it('editing the name calls updateMe with the edited values and returns to the read view', async () => {
+    const updateMe = vi.mocked(authValue.updateMe);
+    updateMe.mockResolvedValue(undefined);
+    renderPage();
+    await openSection('Account');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    const firstNameInput = screen.getByPlaceholderText('First name');
+    const lastNameInput = screen.getByPlaceholderText('Last name');
+    fireEvent.change(firstNameInput, { target: { value: 'Deanna' } });
+    fireEvent.change(lastNameInput, { target: { value: 'Dispatcher' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(updateMe).toHaveBeenCalledWith({ firstName: 'Deanna', lastName: 'Dispatcher' }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText('First name')).not.toBeInTheDocument(),
+    );
+  });
+
+  it('cancelling the name edit discards changes without calling updateMe', async () => {
+    const updateMe = vi.mocked(authValue.updateMe);
+    renderPage();
+    await openSection('Account');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByPlaceholderText('First name'), {
+      target: { value: 'Someone Else' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(updateMe).not.toHaveBeenCalled();
+    expect(await screen.findByText('Dee Ispatcher')).toBeInTheDocument();
+  });
+
+  it('shows an error and stays in edit mode when updateMe fails', async () => {
+    const updateMe = vi.mocked(authValue.updateMe);
+    updateMe.mockRejectedValue(new Error('boom'));
+    renderPage();
+    await openSection('Account');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Could not update your name.')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('First name')).toBeInTheDocument();
+  });
+});
+
+describe('SettingsPage — organization', () => {
+  it('OWNER sees an Edit control and renaming calls updateOrganization', async () => {
+    const updateOrganization = vi.mocked(authValue.updateOrganization);
+    updateOrganization.mockResolvedValue(undefined);
+    renderPage();
+    await openSection('Organization');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    const input = screen.getByPlaceholderText('Organization name');
+    fireEvent.change(input, { target: { value: 'Jebel Ali Logistics' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(updateOrganization).toHaveBeenCalledWith({ name: 'Jebel Ali Logistics' }),
+    );
+  });
+
+  it('hides the Edit control for a DISPATCHER', async () => {
+    const dispatcherAuth: AuthContextValue = {
+      ...authValue,
+      auth: { ...authValue.auth!, membership: { id: 'm1', role: 'DISPATCHER' } },
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={dispatcherAuth}>
+          <SettingsPage />
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+    await openSection('Organization');
+
+    expect(await screen.findByText('Jebel Ali Dispatch')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
   });
 });
 

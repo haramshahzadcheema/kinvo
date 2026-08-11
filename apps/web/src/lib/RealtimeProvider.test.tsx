@@ -18,6 +18,8 @@ const authedContext: AuthContextValue = {
   login: vi.fn(),
   register: vi.fn(),
   logout: vi.fn(),
+  updateMe: vi.fn(),
+  updateOrganization: vi.fn(),
 };
 
 const fakeAuthResponse: AuthResponse = {

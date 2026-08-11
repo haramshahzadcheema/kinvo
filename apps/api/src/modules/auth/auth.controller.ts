@@ -3,6 +3,7 @@ import type {
   AuthResponse,
   LoginRequest,
   RegisterOrganizationRequest,
+  UpdateMeRequest,
 } from '@kinvo/contracts';
 import type { Request, RequestHandler, Response } from 'express';
 import { env } from '../../config/env';
@@ -56,6 +57,7 @@ export interface AuthController {
   logoutAll: RequestHandler;
   acceptInvitation: RequestHandler;
   me: RequestHandler;
+  updateMe: RequestHandler;
 }
 
 export function createAuthController(authService: AuthService): AuthController {
@@ -148,5 +150,26 @@ export function createAuthController(authService: AuthService): AuthController {
     }
   };
 
-  return { registerOrganization, login, refresh, logout, logoutAll, acceptInvitation, me };
+  const updateMe: RequestHandler = async (req, res, next) => {
+    try {
+      if (!req.context) {
+        throw new UnauthorizedError('Missing request context.');
+      }
+      const result = await authService.updateMe(req.context, req.body as UpdateMeRequest);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  return {
+    registerOrganization,
+    login,
+    refresh,
+    logout,
+    logoutAll,
+    acceptInvitation,
+    me,
+    updateMe,
+  };
 }

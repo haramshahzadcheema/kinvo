@@ -3408,3 +3408,49 @@ typecheck/lint/build clean.
 all shipped — every one built on real data this codebase already
 produces, with no fabricated statistics, no external API calls, and no
 feature whose UI claims something the backend can't actually support.
+
+## Settings follow-up — real name and organization editing
+
+With Phases A–F otherwise complete, the one deliberate gap left in
+Settings (`Settings — appearance, notifications, account`, above) was
+that Name and Organization name were read-only fields with no backing
+endpoint. That was a real product decision at the time, not an
+oversight — the user asked for it to be closed out, so both fields are
+now genuinely editable and persisted.
+
+**`PATCH /api/v1/auth/me`** — updates `User.firstName`/`lastName` for
+the calling user. Email is deliberately excluded from the request
+schema entirely (not just hidden in the UI): changing email without a
+verification flow would be an unverified, free-form identity change,
+and this app has no such flow. The response reuses the existing
+`meResponseSchema` shape.
+
+**`PATCH /api/v1/organizations`** — updates `Organization.name`, gated
+to OWNER/ADMIN via a new `organization:manage` action. That action was
+folded into the existing `ORGANIZATION_MANAGEMENT_ACTIONS` bundle
+(alongside members/invitations management) rather than given its own
+independent constant — unlike Yellow Zone's or Reminders' read/manage
+splits, there's no scenario where a role should be able to rename the
+org without also managing its members. The `slug` is never re-derived
+from the new name, so anything already linking to the org by slug
+(invitation links, etc.) doesn't silently break on a later rename.
+
+Both endpoints record an audit event (`user.updated` /
+`organization.updated`) through the same audit logger every other
+mutation in this codebase uses. On the frontend, `AuthContext` gained
+`updateMe`/`updateOrganization`; `AccountSection` and
+`OrganizationSection` each swap from a static field to an inline
+edit-and-save form on demand, with `OrganizationSection`'s Edit control
+hidden entirely for DISPATCHER/VIEWER.
+
+**Verification:** 11 new backend integration tests (name update +
+persistence + validation + auth for `/auth/me`; OWNER/ADMIN allowed,
+DISPATCHER/VIEWER rejected, tenant isolation, validation for
+`/organizations`) — 375/375 backend tests passing. 5 new frontend
+tests covering edit/save, cancel-discards, save-failure, and the
+role-gated Edit visibility — 94/94 frontend tests passing. Full
+workspace typecheck and both production builds clean. Live-verified
+against the running dev stack: registered a fresh account, renamed
+both the user's name and the organization's name through the real UI,
+confirmed both changes persist across a full page reload (not just
+optimistic client state).

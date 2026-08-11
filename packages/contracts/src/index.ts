@@ -28,6 +28,7 @@ export {
   currentMembershipSchema,
   authResponseSchema,
   meResponseSchema,
+  updateMeRequestSchema,
 } from './auth.schema';
 export type {
   RegisterOrganizationRequest,
@@ -38,6 +39,7 @@ export type {
   CurrentMembership,
   AuthResponse,
   MeResponse,
+  UpdateMeRequest,
 } from './auth.schema';
 
 export {
@@ -48,6 +50,8 @@ export {
   invitationStatusSchema,
   invitationSchema,
   listInvitationsResponseSchema,
+  updateOrganizationRequestSchema,
+  updateOrganizationResponseSchema,
 } from './organization.schema';
 export type {
   Member,
@@ -57,6 +61,8 @@ export type {
   InvitationStatusValue,
   InvitationDto,
   ListInvitationsResponse,
+  UpdateOrganizationRequest,
+  UpdateOrganizationResponse,
 } from './organization.schema';
 
 export { paginationQuerySchema, sortOrderSchema } from './pagination.schema';

@@ -1,10 +1,18 @@
-import type { AuthResponse, LoginRequest, RegisterOrganizationRequest } from '@kinvo/contracts';
+import type {
+  AuthResponse,
+  LoginRequest,
+  MeResponse,
+  RegisterOrganizationRequest,
+  UpdateMeRequest,
+  UpdateOrganizationRequest,
+  UpdateOrganizationResponse,
+} from '@kinvo/contracts';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { apiPost, setAccessToken } from './apiClient';
+import { apiPatch, apiPost, setAccessToken } from './apiClient';
 import { AuthContext, type AuthContextValue, type AuthState } from './AuthContext';
 import { refreshSession } from './sessionRefresh';
 
-function toAuthState(response: AuthResponse): AuthState {
+function toAuthState(response: AuthResponse | MeResponse): AuthState {
   return {
     user: response.user,
     organization: response.organization,
@@ -62,9 +70,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const updateMe = useCallback(async (input: UpdateMeRequest) => {
+    const response = await apiPatch<MeResponse>('/api/v1/auth/me', input);
+    setAuth(toAuthState(response));
+  }, []);
+
+  // Only merges `organization` into the existing auth state — the
+  // response is just the updated organization, not a full MeResponse
+  // (see updateOrganizationResponseSchema), so user/membership stay
+  // exactly as they already were rather than being blanked out.
+  const updateOrganization = useCallback(async (input: UpdateOrganizationRequest) => {
+    const response = await apiPatch<UpdateOrganizationResponse>('/api/v1/organizations', input);
+    setAuth((prev) => (prev ? { ...prev, organization: response } : prev));
+  }, []);
+
   const value = useMemo(
-    () => ({ status, auth, login, register, logout }),
-    [status, auth, login, register, logout],
+    () => ({ status, auth, login, register, logout, updateMe, updateOrganization }),
+    [status, auth, login, register, logout, updateMe, updateOrganization],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,4 +1,8 @@
-import { createInvitationRequestSchema, updateMemberRoleRequestSchema } from '@kinvo/contracts';
+import {
+  createInvitationRequestSchema,
+  updateMemberRoleRequestSchema,
+  updateOrganizationRequestSchema,
+} from '@kinvo/contracts';
 import type { RequestHandler } from 'express';
 import { Router } from 'express';
 import { authorize } from '../../core/middleware/authorize';
@@ -14,6 +18,13 @@ export function createOrganizationsRouter(
   const controller = createOrganizationsController(organizationsService);
 
   router.use(authenticate);
+
+  router.patch(
+    '/',
+    authorize('organization:manage'),
+    validateBody(updateOrganizationRequestSchema),
+    controller.updateOrganization,
+  );
 
   router.get('/members', authorize('members:read'), controller.listMembers);
   router.patch(

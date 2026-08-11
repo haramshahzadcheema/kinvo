@@ -1,4 +1,11 @@
-import type { CreateInvitationRequest, InvitationDto, Member, RoleValue } from '@kinvo/contracts';
+import type {
+  CreateInvitationRequest,
+  InvitationDto,
+  Member,
+  RoleValue,
+  UpdateOrganizationRequest,
+  UpdateOrganizationResponse,
+} from '@kinvo/contracts';
 import type { Invitation } from '@prisma/client';
 import type { AuditLogger } from '../../core/audit/audit-logger';
 import { ConflictError, NotFoundError } from '../../core/errors/AppError';
@@ -23,6 +30,7 @@ export interface OrganizationsService {
   createInvitation(input: CreateInvitationRequest): Promise<InvitationDto>;
   listInvitations(): Promise<InvitationDto[]>;
   revokeInvitation(invitationId: string): Promise<void>;
+  updateOrganization(input: UpdateOrganizationRequest): Promise<UpdateOrganizationResponse>;
 }
 
 function toInvitationDto(invitation: Invitation, inviteToken?: string): InvitationDto {
@@ -260,6 +268,34 @@ export function createOrganizationsService({
     });
   }
 
+  // Name-only — slug is assigned once at registration (generateUniqueSlug
+  // in auth.service.ts) and never re-derived here, since anything
+  // already linking to this org by slug (an accepted invitation's own
+  // history, a bookmarked URL if one existed) shouldn't silently start
+  // pointing somewhere else because of a later rename. Organization
+  // isn't tenant-scoped by the Prisma extension (it IS the tenant), so
+  // the `where` is explicit rather than relying on auto-injection —
+  // same reasoning as generateUniqueSlug's own lookup.
+  async function updateOrganization(
+    input: UpdateOrganizationRequest,
+  ): Promise<UpdateOrganizationResponse> {
+    const context = getRequestContext();
+
+    const updated = await prisma.organization.update({
+      where: { id: context.organizationId },
+      data: { name: input.name },
+    });
+
+    await auditLogger.record({
+      type: 'organization.updated',
+      actorUserId: context.userId,
+      organizationId: context.organizationId,
+      targetId: context.organizationId,
+    });
+
+    return { id: updated.id, name: updated.name, slug: updated.slug };
+  }
+
   return {
     listMembers,
     updateMemberRole,
@@ -267,5 +303,6 @@ export function createOrganizationsService({
     createInvitation,
     listInvitations,
     revokeInvitation,
+    updateOrganization,
   };
 }

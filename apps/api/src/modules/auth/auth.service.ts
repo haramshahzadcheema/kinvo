@@ -4,6 +4,7 @@ import type {
   LoginRequest,
   MeResponse,
   RegisterOrganizationRequest,
+  UpdateMeRequest,
 } from '@kinvo/contracts';
 import { Prisma, type Membership, type Organization, type User } from '@prisma/client';
 import type { AuditLogger } from '../../core/audit/audit-logger';
@@ -50,6 +51,7 @@ export interface AuthService {
   logoutAll(rawRefreshToken: string): Promise<void>;
   acceptInvitation(input: AcceptInvitationRequest, meta: RequestMeta): Promise<AuthResult>;
   getMe(context: RequestContext): Promise<MeResponse>;
+  updateMe(context: RequestContext, input: UpdateMeRequest): Promise<MeResponse>;
 }
 
 function slugify(name: string): string {
@@ -469,6 +471,32 @@ export function createAuthService({
     return toAuthDtos(user, organization, membership);
   }
 
+  // Name-only — email has no verification flow in this codebase (see
+  // AccountSection.tsx's own comment), so it deliberately stays out of
+  // this request shape entirely rather than becoming a free, unverified
+  // edit. User is not tenant-scoped (it's the platform identity, not an
+  // org-owned row), so this is a direct findUniqueOrThrow/update by id,
+  // same as getMe's own user lookup above.
+  async function updateMe(context: RequestContext, input: UpdateMeRequest): Promise<MeResponse> {
+    const [user, organization, membership] = await Promise.all([
+      prisma.user.update({
+        where: { id: context.userId },
+        data: { firstName: input.firstName, lastName: input.lastName },
+      }),
+      prisma.organization.findUniqueOrThrow({ where: { id: context.organizationId } }),
+      prisma.membership.findUniqueOrThrow({ where: { id: context.membershipId } }),
+    ]);
+
+    await auditLogger.record({
+      type: 'user.updated',
+      actorUserId: context.userId,
+      organizationId: context.organizationId,
+      targetId: context.userId,
+    });
+
+    return toAuthDtos(user, organization, membership);
+  }
+
   return {
     registerOrganization,
     login,
@@ -477,5 +505,6 @@ export function createAuthService({
     logoutAll,
     acceptInvitation,
     getMe,
+    updateMe,
   };
 }

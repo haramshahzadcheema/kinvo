@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { currentOrganizationSchema } from './auth.schema';
 import { membershipStatusSchema, roleSchema } from './membership.schema';
 
 export const memberSchema = z.object({
@@ -51,3 +52,19 @@ export const listInvitationsResponseSchema = z.object({
   invitations: z.array(invitationSchema),
 });
 export type ListInvitationsResponse = z.infer<typeof listInvitationsResponseSchema>;
+
+// Name-only — slug is assigned once at registration (see
+// auth.service.ts's generateUniqueSlug) and never re-derived from a
+// rename, since anything already linking to the org by slug shouldn't
+// silently break. Gated to OWNER/ADMIN (organization:manage), matching
+// the tier OrganizationSection.tsx already displays org info to
+// differently. Response reuses the same shape GET /me already returns
+// for `organization`, so the frontend can update its cached auth state
+// with the literal response.
+export const updateOrganizationRequestSchema = z.object({
+  name: z.string().trim().min(2).max(200),
+});
+export type UpdateOrganizationRequest = z.infer<typeof updateOrganizationRequestSchema>;
+
+export const updateOrganizationResponseSchema = currentOrganizationSchema;
+export type UpdateOrganizationResponse = z.infer<typeof updateOrganizationResponseSchema>;

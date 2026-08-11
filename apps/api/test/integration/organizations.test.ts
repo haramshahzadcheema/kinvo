@@ -445,6 +445,124 @@ describe('access revocation on role change / removal', () => {
   });
 });
 
+describe('PATCH /api/v1/organizations', () => {
+  async function inviteAndAccept(
+    app: ReturnType<typeof buildApp>,
+    owner: { accessToken: string },
+    role: 'ADMIN' | 'DISPATCHER' | 'VIEWER',
+  ) {
+    const invite = await request(app)
+      .post('/api/v1/organizations/invitations')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ email: `${role.toLowerCase()}@example.com`, role });
+    const accept = await request(app).post('/api/v1/auth/accept-invitation').send({
+      token: invite.body.inviteToken,
+      password: 'a-perfectly-good-password',
+      firstName: 'Team',
+      lastName: role,
+    });
+    return accept.body.accessToken as string;
+  }
+
+  it('lets an OWNER rename the organization', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+
+    const response = await request(app)
+      .patch('/api/v1/organizations')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ name: 'Renamed Logistics Co' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.name).toBe('Renamed Logistics Co');
+    // The slug is deliberately NOT re-derived from the rename — see
+    // updateOrganizationRequestSchema's own comment.
+    expect(response.body.slug).toBeTruthy();
+
+    const persisted = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(persisted.body.organization.name).toBe('Renamed Logistics Co');
+  });
+
+  it('lets an ADMIN rename the organization', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const adminToken = await inviteAndAccept(app, owner, 'ADMIN');
+
+    const response = await request(app)
+      .patch('/api/v1/organizations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Renamed By Admin' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.name).toBe('Renamed By Admin');
+  });
+
+  it('rejects a DISPATCHER — organization:manage is an OWNER/ADMIN-only tier', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const dispatcherToken = await inviteAndAccept(app, owner, 'DISPATCHER');
+
+    const response = await request(app)
+      .patch('/api/v1/organizations')
+      .set('Authorization', `Bearer ${dispatcherToken}`)
+      .send({ name: 'Should Not Work' });
+
+    expect(response.status).toBe(403);
+  });
+
+  it('rejects a VIEWER', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const viewerToken = await inviteAndAccept(app, owner, 'VIEWER');
+
+    const response = await request(app)
+      .patch('/api/v1/organizations')
+      .set('Authorization', `Bearer ${viewerToken}`)
+      .send({ name: 'Should Not Work' });
+
+    expect(response.status).toBe(403);
+  });
+
+  it('rejects a name that is too short', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+
+    const response = await request(app)
+      .patch('/api/v1/organizations')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ name: 'A' });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects an unauthenticated request', async () => {
+    const app = buildApp();
+    const response = await request(app)
+      .patch('/api/v1/organizations')
+      .send({ name: 'Anonymous Rename' });
+    expect(response.status).toBe(401);
+  });
+
+  it("never renames another organization — the update is scoped to the caller's own org", async () => {
+    const app = buildApp();
+    const ownerA = await registerOrganization(app, { organizationName: 'Org A Logistics' });
+    const ownerB = await registerOrganization(app, { organizationName: 'Org B Logistics' });
+
+    await request(app)
+      .patch('/api/v1/organizations')
+      .set('Authorization', `Bearer ${ownerA.accessToken}`)
+      .send({ name: 'Renamed A' })
+      .expect(200);
+
+    const orgB = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${ownerB.accessToken}`);
+    expect(orgB.body.organization.name).toBe('Org B Logistics');
+  });
+});
+
 describe('registration produces genuinely separate organizations', () => {
   it('two registrations never collide on slug even with the same organization name', async () => {
     const app = buildApp();

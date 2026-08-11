@@ -2,6 +2,7 @@ import {
   acceptInvitationRequestSchema,
   loginRequestSchema,
   registerOrganizationRequestSchema,
+  updateMeRequestSchema,
 } from '@kinvo/contracts';
 import type { RequestHandler } from 'express';
 import { Router } from 'express';
@@ -45,6 +46,7 @@ export function createAuthRouter(authService: AuthService, authenticate: Request
     controller.acceptInvitation,
   );
   router.get('/me', authenticate, controller.me);
+  router.patch('/me', authenticate, validateBody(updateMeRequestSchema), controller.updateMe);
 
   return router;
 }

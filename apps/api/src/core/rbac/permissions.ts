@@ -28,7 +28,8 @@ export type Action =
   | 'reminders:manage'
   | 'timeline:read'
   | 'analytics:read'
-  | 'insights:read';
+  | 'insights:read'
+  | 'organization:manage';
 
 const ORGANIZATION_MANAGEMENT_ACTIONS: readonly Action[] = [
   'members:read',
@@ -36,6 +37,12 @@ const ORGANIZATION_MANAGEMENT_ACTIONS: readonly Action[] = [
   'invitations:read',
   'invitations:create',
   'invitations:revoke',
+  // Renaming the organization is the same admin tier as member/invitation
+  // management, not a new one — folded into this bundle rather than
+  // given its own constant the way YELLOW_ZONE_ACTIONS/REMINDER_ACTIONS
+  // are, since there's no scenario here (unlike those two) where a role
+  // should get one of these without the others.
+  'organization:manage',
 ];
 
 // Truck/document requirements aren't separately permissioned — they're

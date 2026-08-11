@@ -335,3 +335,73 @@ describe('GET /api/v1/auth/me', () => {
     expect(response.status).toBe(401);
   });
 });
+
+describe('PATCH /api/v1/auth/me', () => {
+  it("updates the caller's own name and returns the updated identity", async () => {
+    const app = buildApp();
+    const payload = registrationPayload();
+    const registerResponse = await request(app)
+      .post('/api/v1/auth/register-organization')
+      .send(payload);
+    const accessToken = registerResponse.body.accessToken as string;
+
+    const response = await request(app)
+      .patch('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ firstName: 'Ada', lastName: 'Lovelace' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user.firstName).toBe('Ada');
+    expect(response.body.user.lastName).toBe('Lovelace');
+    // Email is deliberately not part of this request shape at all — see
+    // updateMeRequestSchema's own comment — so it must come back
+    // unchanged, never null/blank.
+    expect(response.body.user.email).toBe(payload.email);
+
+    const persisted = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${accessToken}`);
+    expect(persisted.body.user.firstName).toBe('Ada');
+  });
+
+  it('rejects an empty name', async () => {
+    const app = buildApp();
+    const payload = registrationPayload();
+    const registerResponse = await request(app)
+      .post('/api/v1/auth/register-organization')
+      .send(payload);
+    const accessToken = registerResponse.body.accessToken as string;
+
+    const response = await request(app)
+      .patch('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ firstName: '', lastName: 'Lovelace' });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects a missing access token', async () => {
+    const app = buildApp();
+    const response = await request(app)
+      .patch('/api/v1/auth/me')
+      .send({ firstName: 'Ada', lastName: 'Lovelace' });
+    expect(response.status).toBe(401);
+  });
+
+  it('does not accept an email field — the request shape has none to ignore', async () => {
+    const app = buildApp();
+    const payload = registrationPayload();
+    const registerResponse = await request(app)
+      .post('/api/v1/auth/register-organization')
+      .send(payload);
+    const accessToken = registerResponse.body.accessToken as string;
+
+    const response = await request(app)
+      .patch('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ firstName: 'Ada', lastName: 'Lovelace', email: 'someone-else@example.com' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user.email).toBe(payload.email);
+  });
+});

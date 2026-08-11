@@ -1,4 +1,10 @@
-import type { AuthResponse, LoginRequest, RegisterOrganizationRequest } from '@kinvo/contracts';
+import type {
+  AuthResponse,
+  LoginRequest,
+  RegisterOrganizationRequest,
+  UpdateMeRequest,
+  UpdateOrganizationRequest,
+} from '@kinvo/contracts';
 import { createContext } from 'react';
 
 export interface AuthState {
@@ -13,6 +19,8 @@ export interface AuthContextValue {
   login: (input: LoginRequest) => Promise<void>;
   register: (input: RegisterOrganizationRequest) => Promise<void>;
   logout: () => Promise<void>;
+  updateMe: (input: UpdateMeRequest) => Promise<void>;
+  updateOrganization: (input: UpdateOrganizationRequest) => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

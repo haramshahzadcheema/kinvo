@@ -1,4 +1,8 @@
-import type { CreateInvitationRequest, UpdateMemberRoleRequest } from '@kinvo/contracts';
+import type {
+  CreateInvitationRequest,
+  UpdateMemberRoleRequest,
+  UpdateOrganizationRequest,
+} from '@kinvo/contracts';
 import type { RequestHandler } from 'express';
 import type { OrganizationsService } from './organizations.service';
 
@@ -9,6 +13,7 @@ export interface OrganizationsController {
   createInvitation: RequestHandler;
   listInvitations: RequestHandler;
   revokeInvitation: RequestHandler;
+  updateOrganization: RequestHandler;
 }
 
 export function createOrganizationsController(
@@ -74,6 +79,17 @@ export function createOrganizationsController(
     }
   };
 
+  const updateOrganization: RequestHandler = async (req, res, next) => {
+    try {
+      const organization = await organizationsService.updateOrganization(
+        req.body as UpdateOrganizationRequest,
+      );
+      res.status(200).json(organization);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   return {
     listMembers,
     updateMemberRole,
@@ -81,5 +97,6 @@ export function createOrganizationsController(
     createInvitation,
     listInvitations,
     revokeInvitation,
+    updateOrganization,
   };
 }
