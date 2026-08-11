@@ -1,7 +1,7 @@
 import type { ResolvedVoiceCallDto, VoiceCallListResponse } from '@kinvo/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { voiceCallsApi } from '../calls/api';
 import { TranscriptsPage } from './TranscriptsPage';
 
