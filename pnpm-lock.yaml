@@ -54,8 +54,8 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0
       bullmq:
-        specifier: ^6.0.8
-        version: 6.0.8(ioredis@5.11.1)
+        specifier: ^6.0.9
+        version: 6.0.9(ioredis@5.11.1)
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7
@@ -1475,8 +1475,8 @@ packages:
   buffer@6.0.3:
     resolution: {integrity: sha512-FTiCpNxtwiZZHEZbcbTIcZjERVICn9yq/pDFkTl95/AxzD1naBctN7YO68riM/gLSDY7sdrMby8hofADYuuqOA==}
 
-  bullmq@6.0.8:
-    resolution: {integrity: sha512-GsO8S9e5SaQbB4S3kRKNveaYVNxMQlSup7cgk0rRJyr5nwZ4ArftcqPmzJSCqZvJZQqONuwOzs2VKFySvxtbog==}
+  bullmq@6.0.9:
+    resolution: {integrity: sha512-l7kNlirauwdZrqsViO6owHUAhSSN/aCDkrUwZQ2futIItlbJGAxgU+6IOQtTl5Re39GZJEPU6jelGuY1gQD28w==}
     engines: {node: '>=14.17.0'}
     peerDependencies:
       bullmq-otel: '>=2.0.0'
@@ -4028,7 +4028,7 @@ snapshots:
       base64-js: 1.5.1
       ieee754: 1.2.1
 
-  bullmq@6.0.8(ioredis@5.11.1):
+  bullmq@6.0.9(ioredis@5.11.1):
     dependencies:
       cron-parser: 5.7.0
       msgpackr: 2.0.5
