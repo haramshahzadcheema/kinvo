@@ -12,8 +12,8 @@ import type {
 import { Prisma } from '@prisma/client';
 import {
   lockTruckRequirementRow,
-  loadRequirementCounts,
   resolveTenantScopedTruckRequirement,
+  revertShipIfNowShort,
 } from '../ships/ships.service';
 import type { AuditLogger } from '../../core/audit/audit-logger';
 import { ConflictError, NotFoundError } from '../../core/errors/AppError';
@@ -320,67 +320,6 @@ export function createAssignmentsService({
     `;
   }
 
-  // If cancelling or no-showing a CONFIRMED assignment drops a ship that
-  // had reached CONFIRMED status back below full coverage on any
-  // requirement, the ship must not be left silently marked as if
-  // everything were staffed — that's a worse surprise than a status
-  // visibly reverting. See docs/ARCHITECTURE.md's Phase 3 Decisions log.
-  //
-  // Takes `tx`, not the outer `prisma`, and is only ever called from
-  // inside cancelAssignment's/markNoShow's own $transaction — a crash
-  // between "assignment cancelled, driver freed" and "ship reverted to
-  // RECRUITING because it's now short" must not be possible; either the
-  // whole sequence commits or none of it does.
-  async function revertShipIfNowShort(
-    tx: TransactionClient,
-    shipId: string,
-    actorUserId: string,
-  ): Promise<void> {
-    const ship = await tx.ship.findFirst({
-      where: { id: shipId, status: 'CONFIRMED' },
-      select: {
-        organizationId: true,
-        truckRequirements: { select: { id: true, quantityNeeded: true } },
-      },
-    });
-    if (!ship) return;
-
-    // Same `groupBy`-based counts ships.service.ts's SHIP_INCLUDE fix
-    // uses — bounded by (requirement count), never by this ship's full
-    // historical assignment volume. Previously fetched every assignment
-    // row ever created against each requirement, including terminal
-    // REJECTED/WITHDRAWN/CANCELLED ones, just to filter for CONFIRMED in
-    // JS.
-    const counts = await loadRequirementCounts(
-      tx,
-      ship.truckRequirements.map((req) => req.id),
-    );
-    const isShort = ship.truckRequirements.some((req) => {
-      const confirmedCount = counts.get(req.id)?.confirmedCount ?? 0;
-      return confirmedCount < req.quantityNeeded;
-    });
-    if (!isShort) return;
-
-    await tx.ship.update({ where: { id: shipId }, data: { status: 'RECRUITING' } });
-    // Passed `tx` explicitly — this audit record must commit or roll back
-    // together with the ship-status write above, not as an independent
-    // statement that could succeed or fail on its own.
-    await auditLogger.record(
-      {
-        type: 'ship.status_changed',
-        actorUserId,
-        organizationId: ship.organizationId,
-        targetId: shipId,
-        metadata: {
-          previousStatus: 'CONFIRMED',
-          newStatus: 'RECRUITING',
-          reason: 'shortage_after_assignment_change',
-        },
-      },
-      tx,
-    );
-  }
-
   async function listAssignments(query: AssignmentListQuery): Promise<AssignmentListResponse> {
     const context = getRequestContext();
     const where: Prisma.AssignmentWhereInput = {
@@ -638,7 +577,7 @@ export function createAssignmentsService({
         where: { id: existing.driverId },
         data: { availability: 'IDLE', currentShipId: null },
       });
-      await revertShipIfNowShort(tx, existing.truckRequirement.shipId, context.userId);
+      await revertShipIfNowShort(tx, auditLogger, existing.truckRequirement.shipId, context.userId);
     });
 
     await auditLogger.record({
@@ -671,7 +610,7 @@ export function createAssignmentsService({
         where: { id: existing.driverId },
         data: { availability: 'IDLE', currentShipId: null },
       });
-      await revertShipIfNowShort(tx, existing.truckRequirement.shipId, context.userId);
+      await revertShipIfNowShort(tx, auditLogger, existing.truckRequirement.shipId, context.userId);
     });
 
     await auditLogger.record({

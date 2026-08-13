@@ -8,7 +8,7 @@ import type {
   UpdateOrganizationResponse,
 } from '@kinvo/contracts';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { apiPatch, apiPost, setAccessToken } from './apiClient';
+import { apiPatch, apiPost, setAccessToken, setOnSessionExpired } from './apiClient';
 import { AuthContext, type AuthContextValue, type AuthState } from './AuthContext';
 import { refreshSession } from './sessionRefresh';
 
@@ -44,6 +44,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // apiClient's own 401-retry logic (see apiClient.ts's request()) already
+  // attempts a silent refresh-and-retry before ever surfacing an auth
+  // failure to a caller — this only fires once THAT has already failed,
+  // i.e. the refresh-token cookie itself is dead, not just the access
+  // token. Mirrors logout()'s local-state cleanup exactly, minus the
+  // server round trip: a session that's already unrecoverable has nothing
+  // left to tell the server.
+  useEffect(() => {
+    setOnSessionExpired(() => {
+      setAuth(null);
+      setStatus('unauthenticated');
+    });
+    return () => setOnSessionExpired(null);
   }, []);
 
   const login = useCallback(async (input: LoginRequest) => {

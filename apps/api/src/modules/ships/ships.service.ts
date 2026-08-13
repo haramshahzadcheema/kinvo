@@ -216,6 +216,94 @@ export async function resolveTenantScopedTruckRequirement(
   return requirement;
 }
 
+// Same "canonical Ship -> Assignment -> Driver lock-acquisition order"
+// discipline assignments.service.ts's own lockShipRow establishes (see its
+// doc comment there) — duplicated here, not imported, because the
+// dependency direction in this codebase runs one way only:
+// assignments.service.ts already imports from ships.service.ts (for
+// loadRequirementCounts/lockTruckRequirementRow/etc — see those functions'
+// own comments), so the reverse import would create the exact circular
+// service dependency this module deliberately avoids elsewhere (see
+// cascadeShipCancellation's comment). Taking this lock before re-validating
+// a status transition is what makes a concurrent updateShipStatus call for
+// the SAME ship serialize instead of racing — see updateShipStatus below.
+async function lockShipRow(
+  tx: TransactionClient,
+  organizationId: string,
+  shipId: string,
+): Promise<void> {
+  await tx.$queryRaw`
+    SELECT id FROM ships
+    WHERE id = ${shipId} AND "organizationId" = ${organizationId}
+    FOR UPDATE
+  `;
+}
+
+// Reverts a CONFIRMED ship back to RECRUITING if its staffing has fallen
+// below what any truck requirement needs — a ship must never be left
+// silently marked as fully staffed once that's no longer true. Originally
+// lived in assignments.service.ts (called only from cancelAssignment/
+// markNoShow); moved here — and exported, with assignments.service.ts now
+// importing it — because updateTruckRequirement (below) needs the exact
+// same reconciliation when a dispatcher raises quantityNeeded past what's
+// currently confirmed on an already-CONFIRMED ship, and this file is where
+// loadRequirementCounts and the ship status machine already live. `tx` and
+// `auditLogger` are both explicit parameters (not closure-captured) so
+// every call site — this file's own updateTruckRequirement and
+// assignments.service.ts's cancelAssignment/markNoShow — can share the one
+// implementation regardless of which service's DI closure it's called
+// from, the same reasoning loadRequirementCounts already uses for `prisma`.
+//
+// Takes `tx`, not a plain prisma client, and must only ever be called from
+// inside the caller's own already-open transaction — a crash between "the
+// thing that made staffing insufficient committed" and "the ship reverted
+// to RECRUITING" must not be possible; either the whole sequence commits or
+// none of it does.
+export async function revertShipIfNowShort(
+  tx: TransactionClient,
+  auditLogger: AuditLogger,
+  shipId: string,
+  actorUserId: string,
+): Promise<void> {
+  const ship = await tx.ship.findFirst({
+    where: { id: shipId, status: 'CONFIRMED' },
+    select: {
+      organizationId: true,
+      truckRequirements: { select: { id: true, quantityNeeded: true } },
+    },
+  });
+  if (!ship) return;
+
+  const counts = await loadRequirementCounts(
+    tx,
+    ship.truckRequirements.map((req) => req.id),
+  );
+  const isShort = ship.truckRequirements.some((req) => {
+    const confirmedCount = counts.get(req.id)?.confirmedCount ?? 0;
+    return confirmedCount < req.quantityNeeded;
+  });
+  if (!isShort) return;
+
+  await tx.ship.update({ where: { id: shipId }, data: { status: 'RECRUITING' } });
+  // Passed `tx` explicitly — this audit record must commit or roll back
+  // together with the ship-status write above, not as an independent
+  // statement that could succeed or fail on its own.
+  await auditLogger.record(
+    {
+      type: 'ship.status_changed',
+      actorUserId,
+      organizationId: ship.organizationId,
+      targetId: shipId,
+      metadata: {
+        previousStatus: 'CONFIRMED',
+        newStatus: 'RECRUITING',
+        reason: 'shortage_after_assignment_change',
+      },
+    },
+    tx,
+  );
+}
+
 // Locks this truck requirement row for the life of the enclosing
 // transaction — closes a real TOCTOU race in updateTruckRequirement's two
 // business-rule guards (destination/truckType lock once a driver is
@@ -489,6 +577,11 @@ export function createShipsService({
     const context = getRequestContext();
     const target = await resolveOwnedShip(shipId);
 
+    // Fast, cheap rejection for an obviously-invalid transition before ever
+    // opening a transaction. Not the authoritative check — that's below,
+    // inside the transaction, after the lock — this is purely an
+    // optimization so a doomed request doesn't pay for a transaction+lock
+    // it can never pass.
     if (target.status !== status && !VALID_TRANSITIONS[target.status].includes(status)) {
       throw new ConflictError(`Cannot move a ship from ${target.status} to ${status}.`, {
         from: target.status,
@@ -496,11 +589,92 @@ export function createShipsService({
       });
     }
 
+    // Reassigned inside the transaction to the freshly-locked read, so the
+    // audit record below reports the real previous status even if a
+    // concurrent transition landed between resolveOwnedShip above and the
+    // lock — see the TOCTOU comment inside the transaction.
+    let previousStatus: ShipStatusValue = target.status;
+
     // The status flip and its cascade are one atomic unit — a crash
     // between them must never be able to leave a CANCELLED/COMPLETED ship
     // with assignments and drivers that still think they're live.
     await prisma.$transaction(async (tx) => {
-      await tx.ship.update({ where: { id: shipId }, data: { status } });
+      // Locks the ship row before re-reading its status — closes a real
+      // TOCTOU race the plain unconditional update below used to have:
+      // two concurrent updateShipStatus calls for the same ship (e.g. one
+      // dispatcher cancelling while another completes it) could both read
+      // the same pre-transaction status and both pass the in-memory
+      // VALID_TRANSITIONS check before either committed. Same canonical
+      // Ship-first lock order cancelAssignment/markNoShow already
+      // establish (see lockShipRow's comment) — this can never be the
+      // second half of a deadlock cycle with them, since neither this
+      // function nor updateTruckRequirement (below) ever holds Ship while
+      // waiting on anything else.
+      await lockShipRow(tx, context.organizationId, shipId);
+
+      const current = await tx.ship.findFirst({
+        where: { id: shipId },
+        include: { truckRequirements: { select: { id: true, quantityNeeded: true } } },
+      });
+      if (!current) {
+        throw new NotFoundError('Ship not found.');
+      }
+      previousStatus = current.status;
+
+      if (current.status !== status && !VALID_TRANSITIONS[current.status].includes(status)) {
+        throw new ConflictError(`Cannot move a ship from ${current.status} to ${status}.`, {
+          from: current.status,
+          to: status,
+        });
+      }
+
+      // A ship may only become CONFIRMED once every truck requirement is
+      // actually staffed — allowing it earlier would let the dashboard,
+      // reminders, and every other CONFIRMED-trusting surface show a
+      // shipment as fully staffed when it isn't (the exact false
+      // operational state the audit flagged). Only checked on a genuine
+      // RECRUITING -> CONFIRMED transition, not a same-status resend
+      // (`current.status !== status`) — a ship already validly CONFIRMED
+      // is kept that way by revertShipIfNowShort reconciling it the moment
+      // staffing would otherwise fall short (see cancelAssignment/
+      // markNoShow/updateTruckRequirement), so it can't silently need
+      // re-validation here. Uses the exact same loadRequirementCounts
+      // groupBy revertShipIfNowShort uses for the mirror-image check — one
+      // definition of "is this ship short," not two.
+      if (status === 'CONFIRMED' && current.status !== status) {
+        const counts = await loadRequirementCounts(
+          tx,
+          current.truckRequirements.map((req) => req.id),
+        );
+        const shortRequirementIds = current.truckRequirements
+          .filter((req) => (counts.get(req.id)?.confirmedCount ?? 0) < req.quantityNeeded)
+          .map((req) => req.id);
+        if (shortRequirementIds.length > 0) {
+          throw new ConflictError(
+            'Cannot confirm this ship — not every destination has enough confirmed drivers yet.',
+            { shortRequirementIds },
+          );
+        }
+      }
+
+      // Conditional on the status just re-verified above, not a plain
+      // unconditional update — the same conditional-update-plus-affected-
+      // row-count-check pattern this codebase's other state machines use
+      // (see confirmAssignment/claimYellowZoneItem). Genuinely redundant
+      // with the row lock under normal operation — nothing else can have
+      // changed `status` while this transaction holds it — but it's what
+      // makes that "provably can't happen" rather than trusting the lock
+      // alone.
+      const updated = await tx.ship.updateMany({
+        where: { id: shipId, status: current.status },
+        data: { status },
+      });
+      if (updated.count === 0) {
+        throw new ConflictError(`Cannot move a ship from ${current.status} to ${status}.`, {
+          from: current.status,
+          to: status,
+        });
+      }
 
       if (status === 'CANCELLED') {
         await cascadeShipCancellation(tx, shipId);
@@ -514,7 +688,7 @@ export function createShipsService({
       actorUserId: context.userId,
       organizationId: context.organizationId,
       targetId: shipId,
-      metadata: { previousStatus: target.status, newStatus: status },
+      metadata: { previousStatus, newStatus: status },
     });
 
     // Re-fetch rather than reuse the update() result above: the cascade
@@ -603,6 +777,7 @@ export function createShipsService({
     truckRequirementId: string,
     input: Partial<TruckRequirementInput>,
   ): Promise<TruckRequirementDto> {
+    const context = getRequestContext();
     await resolveOwnedTruckRequirement(shipId, truckRequirementId);
 
     const requirement = await prisma.$transaction(async (tx) => {
@@ -641,10 +816,27 @@ export function createShipsService({
         }
       }
 
-      return tx.truckRequirement.update({
+      const updated = await tx.truckRequirement.update({
         where: { id: truckRequirementId },
         data: input,
       });
+
+      // Raising quantityNeeded past what's currently confirmed on an
+      // already-CONFIRMED ship must not leave it silently marked as fully
+      // staffed — same reconciliation cancelAssignment/markNoShow already
+      // trigger for the mirror-image case (a confirmed driver leaving).
+      // Called unconditionally whenever quantityNeeded changes (not just
+      // on an increase) — revertShipIfNowShort itself is a no-op unless
+      // the ship is actually short, so this is always safe. Locked here,
+      // after the TruckRequirement lock already held above, matching the
+      // exact TruckRequirement-then-Ship order updateShipStatus's own
+      // Ship-only lock never conflicts with (see that function's comment).
+      if (input.quantityNeeded !== undefined) {
+        await lockShipRow(tx, context.organizationId, shipId);
+        await revertShipIfNowShort(tx, auditLogger, shipId, context.userId);
+      }
+
+      return updated;
     });
     const counts = await loadRequirementCounts(prisma, [truckRequirementId]);
     return toTruckRequirementDto(requirement, counts.get(truckRequirementId));

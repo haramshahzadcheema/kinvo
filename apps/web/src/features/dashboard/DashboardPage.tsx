@@ -12,20 +12,57 @@ export function DashboardPage({
 }: {
   onNavigate: (tab: 'ships' | 'drivers' | 'yellow-zone', autoOpenCreate?: boolean) => void;
 }) {
-  const { counts: shipStats, isLoading: shipStatsLoading } = useShipStats();
-  const { counts: driverStats, isLoading: driverStatsLoading } = useDriverStats();
-  const { data: yellowZoneStats } = useYellowZoneStatusCounts();
+  const {
+    counts: shipStats,
+    isLoading: shipStatsLoading,
+    isError: shipStatsError,
+  } = useShipStats();
+  const {
+    counts: driverStats,
+    isLoading: driverStatsLoading,
+    isError: driverStatsError,
+  } = useDriverStats();
+  const {
+    data: yellowZoneStats,
+    isError: yellowZoneStatsError,
+    refetch: refetchYellowZoneStats,
+  } = useYellowZoneStatusCounts();
   const { data: pendingYellowZone } = useYellowZone({ status: 'PENDING', pageSize: 4 });
 
   // Reuses the existing list endpoints — no dedicated dashboard/aggregate
   // route, same reasoning as useShipStats/useDriverStats.
-  const { data: etaSorted } = useShips({ sortBy: 'eta', sortOrder: 'asc', pageSize: 50 });
-  const { data: recentShips } = useShips({ sortBy: 'updatedAt', sortOrder: 'desc', pageSize: 5 });
-  const { data: recentDrivers } = useDrivers({
+  const {
+    data: etaSorted,
+    isError: etaSortedError,
+    refetch: refetchEtaSorted,
+  } = useShips({ sortBy: 'eta', sortOrder: 'asc', pageSize: 50 });
+  const {
+    data: recentShips,
+    isError: recentShipsError,
+    refetch: refetchRecentShips,
+  } = useShips({ sortBy: 'updatedAt', sortOrder: 'desc', pageSize: 5 });
+  const {
+    data: recentDrivers,
+    isError: recentDriversError,
+    refetch: refetchRecentDrivers,
+  } = useDrivers({
     sortBy: 'updatedAt',
     sortOrder: 'desc',
     pageSize: 5,
   });
+
+  // Each panel below must be able to tell "the request failed" apart from
+  // "the request succeeded and there's genuinely nothing to show" — a
+  // failed fetch rendering the same reassuring empty-state copy as real
+  // emptiness (e.g. "Good — nothing needs your attention" for a Yellow
+  // Zone count that's actually unknown, not zero) is exactly the false
+  // "all clear" this dashboard must never produce.
+  const statsError = shipStatsError || driverStatsError;
+  const activityError = recentShipsError || recentDriversError;
+  const activityRefetch = () => {
+    void refetchRecentShips();
+    void refetchRecentDrivers();
+  };
 
   const activeShips = (etaSorted?.items ?? []).filter(
     (s) => s.status !== 'COMPLETED' && s.status !== 'CANCELLED',
@@ -58,16 +95,20 @@ export function DashboardPage({
   return (
     <div className="animate-[tideIn_0.2s_ease]">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Recruiting" value={shipStats.RECRUITING} tone="var(--warning)" loading={isLoading} onClick={() => onNavigate('ships')} />
-        <StatCard label="In progress" value={shipStats.IN_PROGRESS} tone="var(--info)" loading={isLoading} onClick={() => onNavigate('ships')} />
-        <StatCard label="Drivers idle" value={driverStats.IDLE} tone="var(--text-secondary)" loading={isLoading} onClick={() => onNavigate('drivers')} />
-        <StatCard label="Drivers on call" value={driverStats.ON_CALL} tone="var(--warning)" loading={isLoading} onClick={() => onNavigate('drivers')} />
+        <StatCard label="Recruiting" value={shipStats.RECRUITING} tone="var(--warning)" loading={isLoading} error={statsError} onClick={() => onNavigate('ships')} />
+        <StatCard label="In progress" value={shipStats.IN_PROGRESS} tone="var(--info)" loading={isLoading} error={statsError} onClick={() => onNavigate('ships')} />
+        <StatCard label="Drivers idle" value={driverStats.IDLE} tone="var(--text-secondary)" loading={isLoading} error={statsError} onClick={() => onNavigate('drivers')} />
+        <StatCard label="Drivers on call" value={driverStats.ON_CALL} tone="var(--warning)" loading={isLoading} error={statsError} onClick={() => onNavigate('drivers')} />
       </div>
 
       <div className="mt-3.5 grid grid-cols-1 gap-3.5 lg:grid-cols-[1.6fr_1fr]">
         <Panel title="Incoming vessels">
-          {upcoming.length === 0 && (
-            <p className="text-xs text-[var(--text-muted)]">No ships with a scheduled ETA yet.</p>
+          {etaSortedError ? (
+            <PanelError onRetry={() => void refetchEtaSorted()} />
+          ) : (
+            upcoming.length === 0 && (
+              <p className="text-xs text-[var(--text-muted)]">No ships with a scheduled ETA yet.</p>
+            )
           )}
           <div className="flex flex-col gap-1.5">
             {upcoming.map((ship) => (
@@ -104,7 +145,11 @@ export function DashboardPage({
         </Panel>
 
         <Panel title="Activity">
-          {!hasActivity && <p className="text-xs text-[var(--text-muted)]">No activity yet.</p>}
+          {activityError ? (
+            <PanelError onRetry={activityRefetch} />
+          ) : (
+            !hasActivity && <p className="text-xs text-[var(--text-muted)]">No activity yet.</p>
+          )}
           <div className="flex flex-col gap-2">
             {recentShips?.items.slice(0, 3).map((ship) => (
               <div
@@ -140,8 +185,12 @@ export function DashboardPage({
 
       <div className="mt-3.5 grid grid-cols-1 gap-3.5 lg:grid-cols-2">
         <Panel title="Shortages">
-          {shortages.length === 0 && (
-            <p className="text-xs text-[var(--text-muted)]">Every active destination is fully staffed.</p>
+          {etaSortedError ? (
+            <PanelError onRetry={() => void refetchEtaSorted()} />
+          ) : (
+            shortages.length === 0 && (
+              <p className="text-xs text-[var(--text-muted)]">Every active destination is fully staffed.</p>
+            )
           )}
           <div className="flex flex-col gap-2">
             {shortages.map((s) => (
@@ -169,7 +218,9 @@ export function DashboardPage({
         </Panel>
 
         <Panel title="Yellow Zone">
-          {(yellowZoneStats?.PENDING ?? 0) === 0 ? (
+          {yellowZoneStatsError ? (
+            <PanelError onRetry={() => void refetchYellowZoneStats()} />
+          ) : (yellowZoneStats?.PENDING ?? 0) === 0 ? (
             <p className="text-xs text-[var(--text-muted)]">Good — nothing needs your attention.</p>
           ) : (
             <>
@@ -210,8 +261,12 @@ export function DashboardPage({
         </Panel>
 
         <Panel title="Today's operations">
-          {today.length === 0 && (
-            <p className="text-xs text-[var(--text-muted)]">Nothing scheduled to arrive or report today.</p>
+          {etaSortedError ? (
+            <PanelError onRetry={() => void refetchEtaSorted()} />
+          ) : (
+            today.length === 0 && (
+              <p className="text-xs text-[var(--text-muted)]">Nothing scheduled to arrive or report today.</p>
+            )
           )}
           <div className="flex flex-col gap-2">
             {today.map((ship) => (
@@ -295,12 +350,14 @@ function StatCard({
   value,
   tone,
   loading,
+  error,
   onClick,
 }: {
   label: string;
   value: number;
   tone: string;
   loading: boolean;
+  error: boolean;
   onClick: () => void;
 }) {
   return (
@@ -313,12 +370,38 @@ function StatCard({
       </div>
       {loading ? (
         <div className="mt-2 h-6 w-10 animate-pulse rounded bg-[var(--surface-muted-3)]" />
+      ) : error ? (
+        // A failed count must never render as a plain "0" — that reads as
+        // a real, reassuring answer ("there are zero of these") rather
+        // than "we don't actually know." "—" is honest about the
+        // difference.
+        <div
+          className="mt-1 font-mono text-2xl font-bold text-[var(--danger)]"
+          title="Couldn't load this count."
+        >
+          —
+        </div>
       ) : (
         <div className="mt-1 font-mono text-2xl font-bold" style={{ color: tone }}>
           {value}
         </div>
       )}
     </button>
+  );
+}
+
+// Shared honest-error state for any dashboard panel whose underlying
+// query failed — used in place of that panel's normal empty-state copy
+// (e.g. "Good — nothing needs your attention") so a failed fetch is never
+// visually indistinguishable from genuine, confirmed emptiness.
+function PanelError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-lg border border-[var(--danger)] px-3 py-2 text-xs text-[var(--danger)]">
+      <span>Couldn&apos;t load this data.</span>
+      <button onClick={onRetry} className="flex-shrink-0 font-semibold underline hover:no-underline">
+        Retry
+      </button>
+    </div>
   );
 }
 

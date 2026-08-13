@@ -798,7 +798,14 @@ describe('ship + truck requirement side effects from assignments', () => {
   it('cascades: completing a ship completes its confirmed assignments and frees drivers', async () => {
     const app = buildApp();
     const owner = await registerOrganization(app);
-    const { shipId, truckRequirementId } = await createShipWithRequirement(app, owner.accessToken);
+    // quantityNeeded: 1 (overriding the shared helper's default of 2) so
+    // this test's single confirmed driver is enough to pass the
+    // CONFIRMED-transition staffing invariant — this test is exercising the
+    // completion cascade, not staffing, so it stays minimally staffed
+    // rather than adding an unrelated second driver.
+    const { shipId, truckRequirementId } = await createShipWithRequirement(app, owner.accessToken, {
+      truckRequirements: [{ destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 }],
+    });
     const driverId = await createDriver(app, owner.accessToken);
     const created = await createAssignment(app, owner.accessToken, truckRequirementId, driverId);
     await request(app)
@@ -878,7 +885,25 @@ describe('ship + truck requirement side effects from assignments', () => {
     );
     expect(onCancelledShip.status).toBe(409);
 
-    const completed = await createShipWithRequirement(app, owner.accessToken);
+    // quantityNeeded: 1 (overriding the shared helper's default of 2) plus
+    // one confirmed driver, so the CONFIRMED-transition staffing invariant
+    // is satisfied — this test is exercising the terminal-status createAssignment
+    // guard, not staffing.
+    const completed = await createShipWithRequirement(app, owner.accessToken, {
+      truckRequirements: [{ destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 }],
+    });
+    const completedShipDriverId = await createDriver(app, owner.accessToken, {
+      phone: '+92 300 7654321',
+    });
+    const completedAssignment = await createAssignment(
+      app,
+      owner.accessToken,
+      completed.truckRequirementId,
+      completedShipDriverId,
+    );
+    await request(app)
+      .patch(`/api/v1/assignments/${completedAssignment.body.id}/confirm`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
     await request(app)
       .patch(`/api/v1/ships/${completed.shipId}/status`)
       .set('Authorization', `Bearer ${owner.accessToken}`)

@@ -1,4 +1,12 @@
+import { refreshSession } from './sessionRefresh';
+
 const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+
+// Never attempted, and never retried through — this IS the refresh call
+// itself. Treating a 401 from it as "try to refresh" would be an infinite
+// loop, and it never carries an Authorization header anyway (the refresh
+// token lives in its own httpOnly cookie, not the access token).
+const REFRESH_PATH = '/api/v1/auth/refresh';
 
 export class ApiError extends Error {
   constructor(
@@ -26,6 +34,18 @@ export function getAccessToken(): string | null {
   return accessToken;
 }
 
+// Registered by AuthProvider (see auth.tsx) so a request-level refresh
+// failure — the refresh-token cookie itself is no longer valid, not just
+// the access token — can clear the app's auth state exactly the way an
+// explicit logout does. apiClient deliberately has no dependency on React/
+// AuthContext of its own; this is the same "expose a setter, let the
+// owning provider wire it up" shape setAccessToken already uses.
+let onSessionExpired: (() => void) | null = null;
+
+export function setOnSessionExpired(handler: (() => void) | null): void {
+  onSessionExpired = handler;
+}
+
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
 // Without this, a dead backend or a dropped connection left every in-flight
@@ -37,7 +57,12 @@ type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 // that a genuinely hung request resolves to a visible, actionable error.
 const REQUEST_TIMEOUT_MS = 15_000;
 
-async function request<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
+async function request<T>(
+  method: HttpMethod,
+  path: string,
+  body?: unknown,
+  isRetry = false,
+): Promise<T> {
   const headers: Record<string, string> = {};
   if (accessToken) {
     headers.Authorization = `Bearer ${accessToken}`;
@@ -80,6 +105,32 @@ async function request<T>(method: HttpMethod, path: string, body?: unknown): Pro
   }
 
   if (!response.ok) {
+    // A 401 mid-session almost always means the ~15-minute access token
+    // TTL expired, not that the request was never valid — the httpOnly
+    // refresh cookie can silently redeem a new one. Attempted at most
+    // once (`isRetry` guards against looping if the retried request
+    // somehow 401s again), never for the refresh call itself, and never
+    // when there was no access token to begin with (a 401 from
+    // login/register-organization is a real "wrong credentials" answer,
+    // not an expired session — there is nothing to refresh). refreshSession()
+    // is already single-flight (see sessionRefresh.ts), so N simultaneous
+    // 401s here share the one underlying refresh call, not N of them.
+    if (response.status === 401 && !isRetry && path !== REFRESH_PATH && accessToken !== null) {
+      try {
+        const refreshed = await refreshSession();
+        setAccessToken(refreshed.accessToken);
+        return request<T>(method, path, body, true);
+      } catch {
+        // The refresh-token cookie itself is dead, not just the access
+        // token — there is no session left to recover. Clear it and let
+        // the app fall back to the login screen instead of leaving every
+        // subsequent request silently failing against a token that will
+        // never work again.
+        setAccessToken(null);
+        onSessionExpired?.();
+      }
+    }
+
     const message =
       payload && typeof payload === 'object' && 'error' in payload
         ? ((payload as { error?: { message?: string } }).error?.message ?? response.statusText)

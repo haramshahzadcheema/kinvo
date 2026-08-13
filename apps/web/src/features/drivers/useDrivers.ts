@@ -31,7 +31,13 @@ export function useDriverStats() {
     STATS_AVAILABILITY.map((availability, i) => [availability, results[i]?.data?.total ?? 0]),
   ) as Record<DriverAvailabilityValue, number>;
 
-  return { counts, isLoading: results.some((r) => r.isLoading) };
+  // See useShipStats' identical isError addition — a failed count must
+  // never render as a plain, reassuring 0.
+  return {
+    counts,
+    isLoading: results.some((r) => r.isLoading),
+    isError: results.some((r) => r.isError),
+  };
 }
 
 export function useDriver(driverId: string | null) {

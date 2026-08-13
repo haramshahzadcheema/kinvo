@@ -36,7 +36,15 @@ export function useShipStats() {
     STATS_STATUSES.map((status, i) => [status, results[i]?.data?.total ?? 0]),
   ) as Record<ShipStatusValue, number>;
 
-  return { counts, isLoading: results.some((r) => r.isLoading) };
+  // Distinguished from isLoading so callers (the Dashboard's stat cards)
+  // can tell "still fetching" apart from "fetch failed" — a failed count
+  // must never render as a plain 0, which reads as a genuine, reassuring
+  // "there are zero of these" rather than "we don't actually know."
+  return {
+    counts,
+    isLoading: results.some((r) => r.isLoading),
+    isError: results.some((r) => r.isError),
+  };
 }
 
 export function useShip(shipId: string | null) {

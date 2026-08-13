@@ -165,6 +165,19 @@ export function createDriversService({
   async function createDriver(input: CreateDriverRequest): Promise<DriverDto> {
     const context = getRequestContext();
 
+    // CONFIRMED means "genuinely confirmed onto a real Assignment" — see
+    // confirmAssignment (assignments.service.ts), the only legitimate path
+    // that sets it. A brand-new driver cannot have one yet (there is no
+    // assignment to reference until the driver itself exists), so
+    // requesting it here is always a manufactured, unbacked state, not a
+    // real one — same invariant updateDriver enforces below for an
+    // existing driver.
+    if (input.availability === 'CONFIRMED') {
+      throw new ConflictError(
+        'A driver can only be marked Confirmed by confirming a real assignment, not on creation.',
+      );
+    }
+
     if (input.currentShipId) {
       await assertShipBelongsToOrg(input.currentShipId);
     }
@@ -257,6 +270,19 @@ export function createDriversService({
                 'This driver has an active confirmed assignment. Cancel or complete it before changing availability or ship directly.',
               );
             }
+          } else if (input.availability === 'CONFIRMED') {
+            // The other half of this guard: without an activeAssignment,
+            // requesting CONFIRMED here would manufacture the exact
+            // orphaned state the block above exists to protect against —
+            // a driver that LOOKS committed to a job but has no real
+            // Assignment backing it, which confirmAssignment's own
+            // IDLE-gated updateMany and cancelAssignment/markNoShow's
+            // unconditional reset back to IDLE (assignments.service.ts)
+            // both assume can never happen. CONFIRMED is only ever
+            // legitimately reached by confirming a real assignment.
+            throw new ConflictError(
+              'A driver can only be marked Confirmed by confirming a real assignment — there is no active confirmed assignment for this driver.',
+            );
           }
         }
 

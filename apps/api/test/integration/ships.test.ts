@@ -461,3 +461,229 @@ describe('truck and document requirements', () => {
     expect(response.status).toBe(404);
   });
 });
+
+// Fix 3: a ship must only reach (or remain at) CONFIRMED while every truck
+// requirement's confirmed-driver count actually meets quantityNeeded — the
+// server-side invariant the audit's "false CONFIRMED" P0 required, not just
+// a frontend disable state.
+describe('ship staffing invariant on CONFIRMED', () => {
+  async function createDriverAndConfirm(
+    app: ReturnType<typeof buildApp>,
+    token: string,
+    truckRequirementId: string,
+    phone: string,
+  ) {
+    const driver = await request(app)
+      .post('/api/v1/drivers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Ahsan Raza', phone, truckType: 'Flatbed' });
+    const assignment = await request(app)
+      .post('/api/v1/assignments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ truckRequirementId, driverId: driver.body.id });
+    await request(app)
+      .patch(`/api/v1/assignments/${assignment.body.id}/confirm`)
+      .set('Authorization', `Bearer ${token}`);
+    return driver.body.id as string;
+  }
+
+  it('confirms a ship once every truck requirement has enough confirmed drivers', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const ship = await createShip(app, owner.accessToken, {
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+      ],
+    });
+    const truckRequirementId = ship.body.truckRequirements[0].id as string;
+    await createDriverAndConfirm(app, owner.accessToken, truckRequirementId, '+92 300 1111111');
+    await createDriverAndConfirm(app, owner.accessToken, truckRequirementId, '+92 300 2222222');
+
+    await request(app)
+      .patch(`/api/v1/ships/${ship.body.id}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'RECRUITING' });
+    const response = await request(app)
+      .patch(`/api/v1/ships/${ship.body.id}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'CONFIRMED' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('CONFIRMED');
+  });
+
+  it('rejects confirming a ship where a truck requirement is still understaffed', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const ship = await createShip(app, owner.accessToken, {
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+      ],
+    });
+    const truckRequirementId = ship.body.truckRequirements[0].id as string;
+    // Only one of the two needed drivers confirmed.
+    await createDriverAndConfirm(app, owner.accessToken, truckRequirementId, '+92 300 1111111');
+
+    await request(app)
+      .patch(`/api/v1/ships/${ship.body.id}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'RECRUITING' });
+    const response = await request(app)
+      .patch(`/api/v1/ships/${ship.body.id}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'CONFIRMED' });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.details).toMatchObject({
+      shortRequirementIds: [truckRequirementId],
+    });
+
+    const stillRecruiting = await request(app)
+      .get(`/api/v1/ships/${ship.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(stillRecruiting.body.status).toBe('RECRUITING');
+  });
+
+  it('reverts an already-CONFIRMED ship back to RECRUITING when quantityNeeded is raised above what is currently confirmed', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const ship = await createShip(app, owner.accessToken, {
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 },
+      ],
+    });
+    const truckRequirementId = ship.body.truckRequirements[0].id as string;
+    await createDriverAndConfirm(app, owner.accessToken, truckRequirementId, '+92 300 1111111');
+
+    await request(app)
+      .patch(`/api/v1/ships/${ship.body.id}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'RECRUITING' });
+    const confirmed = await request(app)
+      .patch(`/api/v1/ships/${ship.body.id}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'CONFIRMED' });
+    expect(confirmed.body.status).toBe('CONFIRMED');
+
+    // Dispatcher raises the need from 1 to 2 after the ship is already
+    // CONFIRMED — it must not stay marked as fully staffed.
+    const raised = await request(app)
+      .patch(`/api/v1/ships/${ship.body.id}/truck-requirements/${truckRequirementId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ quantityNeeded: 2 });
+    expect(raised.status).toBe(200);
+
+    const shipAfter = await request(app)
+      .get(`/api/v1/ships/${ship.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(shipAfter.body.status).toBe('RECRUITING');
+  });
+
+  it('does not revert a CONFIRMED ship when quantityNeeded changes but stays within what is already confirmed', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const ship = await createShip(app, owner.accessToken, {
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+      ],
+    });
+    const truckRequirementId = ship.body.truckRequirements[0].id as string;
+    await createDriverAndConfirm(app, owner.accessToken, truckRequirementId, '+92 300 1111111');
+    await createDriverAndConfirm(app, owner.accessToken, truckRequirementId, '+92 300 2222222');
+
+    await request(app)
+      .patch(`/api/v1/ships/${ship.body.id}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'RECRUITING' });
+    await request(app)
+      .patch(`/api/v1/ships/${ship.body.id}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'CONFIRMED' });
+
+    // quantityNeeded can never legally drop below the confirmed count (see
+    // the pre-existing "blocks reducing quantityNeeded below the confirmed
+    // count" guard) — so the only "changes but stays within what's
+    // confirmed" case for 2 confirmed drivers is re-sending the same value.
+    // Still exercises the reconciliation path (`input.quantityNeeded !==
+    // undefined`), just with nothing short to revert.
+    const resent = await request(app)
+      .patch(`/api/v1/ships/${ship.body.id}/truck-requirements/${truckRequirementId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ quantityNeeded: 2 });
+    expect(resent.status).toBe(200);
+
+    const shipAfter = await request(app)
+      .get(`/api/v1/ships/${ship.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(shipAfter.body.status).toBe('CONFIRMED');
+  });
+
+  it('under concurrent CONFIRMED requests for an understaffed ship, neither succeeds and neither request 500s', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const ship = await createShip(app, owner.accessToken, {
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+      ],
+    });
+    const truckRequirementId = ship.body.truckRequirements[0].id as string;
+    await createDriverAndConfirm(app, owner.accessToken, truckRequirementId, '+92 300 1111111');
+    await request(app)
+      .patch(`/api/v1/ships/${ship.body.id}/status`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ status: 'RECRUITING' });
+
+    const [first, second] = await Promise.all([
+      request(app)
+        .patch(`/api/v1/ships/${ship.body.id}/status`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ status: 'CONFIRMED' }),
+      request(app)
+        .patch(`/api/v1/ships/${ship.body.id}/status`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ status: 'CONFIRMED' }),
+    ]);
+
+    expect([first.status, second.status]).toEqual([409, 409]);
+
+    const shipAfter = await request(app)
+      .get(`/api/v1/ships/${ship.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(shipAfter.body.status).toBe('RECRUITING');
+  });
+
+  it("never uses org B's confirmed-driver counts to satisfy org A's ship staffing check", async () => {
+    const app = buildApp();
+    const ownerA = await registerOrganization(app);
+    const ownerB = await registerOrganization(app);
+    const shipA = await createShip(app, ownerA.accessToken, {
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 },
+      ],
+    });
+    const shipB = await createShip(app, ownerB.accessToken, {
+      truckRequirements: [
+        { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 1 },
+      ],
+    });
+    // Fully staff org B's requirement only — org A's identical-looking
+    // requirement remains unstaffed.
+    await createDriverAndConfirm(
+      app,
+      ownerB.accessToken,
+      shipB.body.truckRequirements[0].id,
+      '+92 300 3333333',
+    );
+
+    await request(app)
+      .patch(`/api/v1/ships/${shipA.body.id}/status`)
+      .set('Authorization', `Bearer ${ownerA.accessToken}`)
+      .send({ status: 'RECRUITING' });
+    const response = await request(app)
+      .patch(`/api/v1/ships/${shipA.body.id}/status`)
+      .set('Authorization', `Bearer ${ownerA.accessToken}`)
+      .send({ status: 'CONFIRMED' });
+
+    expect(response.status).toBe(409);
+  });
+});

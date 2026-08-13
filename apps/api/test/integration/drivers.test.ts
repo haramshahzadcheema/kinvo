@@ -305,6 +305,127 @@ describe('drivers availability — cannot drift from a live confirmed assignment
     expect(response.status).toBe(200);
     expect(response.body.availability).toBe('ON_CALL');
   });
+
+  // Audit P0: Driver.availability could be forced to CONFIRMED with no
+  // real backing Assignment via an ordinary PATCH — a driver that LOOKS
+  // committed to a job but isn't actually on one. The tests above already
+  // cover the mirror case (an already-CONFIRMED driver can't drift away);
+  // these cover the direction the audit specifically flagged: entering
+  // CONFIRMED without ever going through confirmAssignment.
+  it('rejects PATCHing a driver with no assignment at all straight into CONFIRMED', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const driver = await createDriver(app, owner.accessToken);
+
+    const response = await request(app)
+      .patch(`/api/v1/drivers/${driver.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ availability: 'CONFIRMED' });
+
+    expect(response.status).toBe(409);
+
+    const driverAfter = await request(app)
+      .get(`/api/v1/drivers/${driver.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+    expect(driverAfter.body.availability).toBe('IDLE');
+  });
+
+  it('rejects PATCHing a driver whose only assignment is merely PENDING (not yet confirmed) into CONFIRMED', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const ship = await request(app)
+      .post('/api/v1/ships')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        shipName: 'MSC Aurora',
+        truckRequirements: [
+          { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+        ],
+      });
+    const truckRequirementId = ship.body.truckRequirements[0].id as string;
+    const driver = await createDriver(app, owner.accessToken);
+    await request(app)
+      .post('/api/v1/assignments')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ truckRequirementId, driverId: driver.body.id });
+
+    const response = await request(app)
+      .patch(`/api/v1/drivers/${driver.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ availability: 'CONFIRMED' });
+
+    expect(response.status).toBe(409);
+  });
+
+  it('rejects PATCHing a driver whose assignment was REJECTED (a terminal, non-confirmed outcome) into CONFIRMED', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const ship = await request(app)
+      .post('/api/v1/ships')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        shipName: 'MSC Aurora',
+        truckRequirements: [
+          { destination: 'Salalah, Oman', truckType: 'Flatbed', quantityNeeded: 2 },
+        ],
+      });
+    const truckRequirementId = ship.body.truckRequirements[0].id as string;
+    const driver = await createDriver(app, owner.accessToken);
+    const assignment = await request(app)
+      .post('/api/v1/assignments')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ truckRequirementId, driverId: driver.body.id });
+    await request(app)
+      .patch(`/api/v1/assignments/${assignment.body.id}/reject`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ reason: 'Truck is in for maintenance' });
+
+    const response = await request(app)
+      .patch(`/api/v1/drivers/${driver.body.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ availability: 'CONFIRMED' });
+
+    expect(response.status).toBe(409);
+  });
+
+  it('rejects CREATING a driver directly with availability CONFIRMED — a brand-new driver can never have a real assignment yet', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+
+    const response = await createDriver(app, owner.accessToken, { availability: 'CONFIRMED' });
+
+    expect(response.status).toBe(409);
+  });
+
+  it('a real confirmed assignment still legitimately produces CONFIRMED availability end-to-end', async () => {
+    const app = buildApp();
+    const owner = await registerOrganization(app);
+    const { driverId, shipId } = await createConfirmedAssignment(app, owner.accessToken);
+
+    const driver = await request(app)
+      .get(`/api/v1/drivers/${driverId}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`);
+
+    expect(driver.body.availability).toBe('CONFIRMED');
+    expect(driver.body.currentShipId).toBe(shipId);
+  });
+
+  it("does not leak org B's assignment state into org A's attempt to force-confirm its own driver (tenant isolation)", async () => {
+    const app = buildApp();
+    const ownerA = await registerOrganization(app);
+    const ownerB = await registerOrganization(app);
+    // Org B has a real confirmed assignment for ITS driver — proves org A
+    // can't somehow ride on org B's state, only its own is ever consulted.
+    await createConfirmedAssignment(app, ownerB.accessToken);
+    const driverA = await createDriver(app, ownerA.accessToken);
+
+    const response = await request(app)
+      .patch(`/api/v1/drivers/${driverA.body.id}`)
+      .set('Authorization', `Bearer ${ownerA.accessToken}`)
+      .send({ availability: 'CONFIRMED' });
+
+    expect(response.status).toBe(409);
+  });
 });
 
 describe('driver deletion — blocked by assignment history', () => {
@@ -382,7 +503,11 @@ describe('drivers list — search, filter, sort, pagination', () => {
       fullName: 'Tomas Reyes',
       phone: '+1 281 555 0199',
       truckPlate: 'TRK-0873',
-      availability: 'CONFIRMED',
+      // ON_CALL, not CONFIRMED — CONFIRMED can no longer be set without a
+      // real backing assignment (see the driver-availability-invariant
+      // fix below); this test only needs a second, distinct availability
+      // value to prove the filter itself works.
+      availability: 'ON_CALL',
     });
 
     const searchResponse = await request(app)
