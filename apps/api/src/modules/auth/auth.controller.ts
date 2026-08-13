@@ -12,6 +12,22 @@ import type { AuthResult, AuthService, RequestMeta } from './auth.service';
 
 const REFRESH_TOKEN_COOKIE_PATH = '/api/v1/auth';
 
+// 'strict' in dev/test: web and api are same-site there (SameSite only
+// cares about scheme+eTLD+1, not port — localhost:5173 and localhost:4000
+// are the same site), so the stricter setting costs nothing locally.
+// 'none' in production: web and api are deployed as separate services on
+// unrelated hosts (e.g. Railway's *.up.railway.app subdomains are each
+// their own site per the public suffix list), and SameSite=Strict/Lax
+// cookies are never sent on that kind of cross-site fetch — refresh would
+// silently fail every time. 'None' requires `Secure`, which is already
+// tied to the same NODE_ENV check just below, so the two never disagree.
+// CORS_ORIGIN still allowlists exactly one origin (see app.ts), which is
+// what actually bounds the CSRF exposure this trades away: an attacker's
+// page can trigger this cookie's use, but Origin-restricted CORS + the
+// separate in-memory access token (never in a cookie) keep it from
+// reaching any real business endpoint.
+const REFRESH_COOKIE_SAME_SITE = env.NODE_ENV === 'production' ? 'none' : 'strict';
+
 function setRefreshTokenCookie(res: Response, rawRefreshToken: string): void {
   res.cookie(env.REFRESH_TOKEN_COOKIE_NAME, rawRefreshToken, {
     httpOnly: true,
@@ -19,14 +35,18 @@ function setRefreshTokenCookie(res: Response, rawRefreshToken: string): void {
     // http://localhost — hardcoding `true` here would make local login
     // look broken for no obvious reason.
     secure: env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: REFRESH_COOKIE_SAME_SITE,
     maxAge: env.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
     path: REFRESH_TOKEN_COOKIE_PATH,
   });
 }
 
 function clearRefreshTokenCookie(res: Response): void {
-  res.clearCookie(env.REFRESH_TOKEN_COOKIE_NAME, { path: REFRESH_TOKEN_COOKIE_PATH });
+  res.clearCookie(env.REFRESH_TOKEN_COOKIE_NAME, {
+    path: REFRESH_TOKEN_COOKIE_PATH,
+    secure: env.NODE_ENV === 'production',
+    sameSite: REFRESH_COOKIE_SAME_SITE,
+  });
 }
 
 function requestMeta(req: Request): RequestMeta {
