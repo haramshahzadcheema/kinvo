@@ -47,6 +47,11 @@ services:
       JWT_ACCESS_TTL: 15m
       REFRESH_TOKEN_TTL_DAYS: '30'
       REFRESH_TOKEN_COOKIE_NAME: kinvo_refresh_token
+      # Read from the root .env (gitignored), same substitution pattern as
+      # POSTGRES_USER/etc. above — never hardcode a real key in this
+      # tracked file. Falls back to the placeholder if unset, matching the
+      # worker service below.
+      CALLE_API_KEY: ${CALLE_API_KEY:-dev-placeholder-calle-api-key}
     ports:
       - '4000:4000'
     volumes:
@@ -83,9 +88,9 @@ services:
       JWT_ACCESS_TTL: 15m
       REFRESH_TOKEN_TTL_DAYS: '30'
       REFRESH_TOKEN_COOKIE_NAME: kinvo_refresh_token
-      # Dev-only placeholder, same story as apps/api/.env's own — replace
-      # with a real key to actually place calls from the compose stack.
-      CALLE_API_KEY: dev-placeholder-calle-api-key
+      # Read from the root .env (gitignored) — see the api service's own
+      # comment above.
+      CALLE_API_KEY: ${CALLE_API_KEY:-dev-placeholder-calle-api-key}
     # The image's own HEALTHCHECK (baked in via the Dockerfile, shared with
     # `api`) probes :4000/health/live — this container never listens on
     # :4000 at all, so that check would just report "unhealthy" forever.
