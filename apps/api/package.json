@@ -16,7 +16,9 @@
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:migrate:deploy": "prisma migrate deploy"
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "seed:demo": "tsx --env-file=.env prisma/seed/index.ts",
+    "seed:demo:reset": "tsx --env-file=.env prisma/seed/index.ts --reset"
   },
   "dependencies": {
     "@call-e/calle": "^0.6.0",

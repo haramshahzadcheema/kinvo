@@ -12,6 +12,8 @@
     "build": "pnpm -r --if-present run build",
     "dev:api": "pnpm --filter @kinvo/api run dev",
     "dev:web": "pnpm --filter @kinvo/web run dev",
+    "db:seed:demo": "pnpm --filter @kinvo/api run seed:demo",
+    "db:seed:demo:reset": "pnpm --filter @kinvo/api run seed:demo:reset",
     "lint": "pnpm run build:contracts && pnpm run prisma:generate && pnpm -r --if-present run lint",
     "typecheck": "pnpm run build:contracts && pnpm run prisma:generate && pnpm -r --if-present run typecheck",
     "test": "pnpm run build:contracts && pnpm run prisma:generate && pnpm -r --if-present run test",
