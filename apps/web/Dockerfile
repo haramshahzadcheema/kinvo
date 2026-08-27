@@ -5,7 +5,7 @@
 # Production does not run web in a container: per docs/ARCHITECTURE.md §16,
 # the web app is built to static assets and served via a CDN, not Node.
 
-FROM node:20-alpine
+FROM node:25-alpine
 RUN corepack enable
 WORKDIR /workspace
 
