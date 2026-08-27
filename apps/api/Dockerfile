@@ -1,7 +1,7 @@
 # Build context is the repository root (this is a pnpm workspace monorepo).
 # docker build -f apps/api/Dockerfile .
 
-FROM node:20-alpine AS base
+FROM node:25-alpine AS base
 # Prisma's query/schema engines shell out to `openssl version` to pick the
 # right engine binary (openssl-1.1.x vs openssl-3.0.x) — node:20-alpine
 # doesn't ship the openssl CLI by default, so detection silently falls back
@@ -61,7 +61,7 @@ RUN pnpm --filter @kinvo/contracts run build && pnpm --filter @kinvo/api run bui
 # rewritten runtime stage against, and an unverified Dockerfile change is
 # worse than a documented, correct-but-not-yet-lean one. Do not let this
 # linger past Phase 7.
-FROM node:20-alpine AS runtime
+FROM node:25-alpine AS runtime
 # Same reasoning as the `base` stage above — this stage builds from
 # node:20-alpine directly rather than from `base`, so it needs its own copy.
 RUN apk add --no-cache openssl
